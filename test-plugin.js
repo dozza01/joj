@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         Тестовая кнопка Pro
-// @version      1.1.0
+// @version      1.1.1
 // @description  Кнопка с сохранением позиции и счетчиком кликов
 // @match        *://*/*
 // ==/UserScript==
