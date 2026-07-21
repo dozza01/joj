@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         OpenRouter Translator
 // @namespace    http://tampermonkey.net/
-// @version      2.0
+// @version      2.1
 // @description  Переводчик на базе OpenRouter API с настройками модели, промпта и горячих клавиш
 // @author       You
 // @match        *://*/*
