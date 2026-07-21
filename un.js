@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Круглая кнопка
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      11
 // @description  Добавляет круглую кнопку в левый верхний угол, которая ничего не делает.
 // @author       You
 // @match        *://*/*
