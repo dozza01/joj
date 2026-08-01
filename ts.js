@@ -1,27 +1,10 @@
 // ==UserScript==
 // @name             TransDesk – Instantly Translate Any Selected Text
-// @name:fr          TransDesk – Traduisez instantanément n'importe quel texte sélectionné
-// @name:es          TransDesk – Traduce instantáneamente cualquier texto seleccionado
-// @name:de          TransDesk – Übersetzen Sie jeden ausgewählten Text sofort
-// @name:ru          TransDesk – Мгновенно переводите любой выделенный текст
-
-// @name:fr-CA       TransDesk – Traduisez instantanément n'importe quel texte sélectionné
-// @name:ckb         TransDesk – Her Nivîsarek Hilbijartî tavilê Wergerîne
-// @name:es-419      TransDesk – Traduce instantáneamente cualquier texto seleccionado
-
 // @description       Instantly translate selected text using the smart button or the Ctrl+L shortcut. Automatically detects the language and translates it into the language of your choice.
-// @description:fr    Traduisez instantanément le texte sélectionné grâce au bouton intelligent ou au raccourci Ctrl+L. Détection automatique de la langue et traduction immédiate dans la langue de votre choix.
-// @description:es    Traduce instantáneamente el texto seleccionado mediante el botón inteligente o el atajo Ctrl+L. Detecta automáticamente el idioma y lo traduce al idioma de tu elección.
-// @description:de    Übersetzen Sie ausgewählten Text sofort über die intelligente Schaltfläche oder die Tastenkombination Strg+L. Erkennt die Sprache automatisch und übersetzt sie in die Sprache Ihrer Wahl.
-// @description:ru    Мгновенно переводите выделенный текст с помощью умной кнопки или сочетания Ctrl+L. Автоматически определяет язык и переводит его на выбранный вами язык.
-// @description:uk    Миттєво перекладіть виділений текст за допомогою розумної кнопки або поєднання Ctrl+L. Автоматично визначає мову та перекладає її на обрану вами мову.
-// @description:vi    Dịch ngay văn bản đã chọn bằng nút thông minh hoặc phím tắt Ctrl+L. Tự động phát hiện ngôn ngữ và dịch sang ngôn ngữ bạn chọn.
-// @description:fr-CA Traduisez instantanément le texte sélectionné grâce au bouton intelligent ou au raccourci Ctrl+L. Détection automatique de la langue et traduction immédiate dans la langue de votre choix.
-// @description:ckb   دەقە هەڵبژێردراوەکانت بە شێوەیەکی خێرا بە دوگمەی زیرەک یان Ctrl+L وەرگێڕە. زمان بە ئۆتۆماتیکی دەدۆزێتەوە و دەیگۆڕێتە سەر زمانی هەڵبژێردراوی تۆ.
-// @description:es-419 Traduce instantáneamente el texto seleccionado mediante el botón inteligente o el atajo Ctrl+L. Detecta automáticamente el idioma y lo traduce al idioma que elijas.
 
-// @namespace    https://github.com/DREwX-code
-// @author       Dℝ∃wX
+
+// @namespace    TransDesk
+// @author       KDESK
 // @copyright    2025-2026 Dℝ∃wX
 // @license      Apache-2.0
 // @grant        GM_xmlhttpRequest
@@ -32,7 +15,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      1.5.5
+// @version      1.6.0
 // @icon         https://raw.githubusercontent.com/DREwX-code/Ultimate-Text-Selection-Translator/refs/heads/main/assets/icons/Icon_Translate_Script.png
 // @tag          translation
 // @tag          text selection
@@ -1740,6 +1723,28 @@ limitations under the License.
                 </div>
 
             </div>
+
+            <div id="replySuggestionWrap" style="display:none; margin-top:4px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                    <span style="color:#a0a0c0; font-size:12px; font-weight:600;">Подсказка ответа</span>
+                    <div style="display:flex; gap:10px; align-items:center;">
+                        <div id="replySuggestionRefresh" style="cursor:pointer;" title="Сгенерировать заново">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="23 4 23 10 17 10"></polyline>
+                                <polyline points="1 20 1 14 7 14"></polyline>
+                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+                            </svg>
+                        </div>
+                        <div id="replySuggestionCopy" style="cursor:pointer;" title="Скопировать подсказку">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                            </svg>
+                        </div>
+                    </div>
+                </div>
+                <div id="replySuggestionText" style="background: rgba(120,170,255,0.08); border:1px solid rgba(120,170,255,0.25); padding: 10px; border-radius: 8px; min-height: 46px; max-height: 130px; overflow-y:auto; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; color:#e5e5ff;"></div>
+            </div>
         </div>
 
 
@@ -1846,6 +1851,37 @@ limitations under the License.
             <select id="fieldTargetLangSelect" class="utst-blacklist-input" style="cursor: pointer;">
                 ${targetLanguageOptionsHtml}
             </select>
+        </div>
+        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+            <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:14px; cursor:pointer; margin-bottom:6px;">
+                <input type="checkbox" id="replySuggestionToggle" style="cursor:pointer;">
+                Подсказка ответа лиду под переводом
+            </label>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-bottom: 10px;">При переводе выделенного сообщения дополнительно предлагается готовый вариант ответа — остаётся скопировать.</div>
+
+            <label for="replySuggestionSource" style="color:#fff; font-size:12px;">Источник подсказки:</label>
+            <select id="replySuggestionSource" class="utst-blacklist-input" style="cursor:pointer; margin-bottom:8px;">
+                <option value="ai">Только ИИ</option>
+                <option value="pool">Только база (GitHub)</option>
+                <option value="pool_ai">База + ИИ (адаптирует шаблон под текст)</option>
+            </select>
+
+            <label for="replySuggestionPoolUrl" style="color:#fff; font-size:12px;">Raw-URL базы подсказок (JSON):</label>
+            <input type="text" id="replySuggestionPoolUrl" class="utst-blacklist-input" placeholder="https://raw.githubusercontent.com/user/repo/main/replies.json" style="width:100%; box-sizing:border-box;">
+            <div style="font-size: 11px; color: rgba(255,255,255,0.45); margin: 4px 0 8px;">Формат файла — JSON-массив: <span style="font-family:monospace;">[{"keywords":["депозит","bonus"],"reply":"текст ответа"}]</span>. Берётся запись с наибольшим числом совпавших ключевых слов в исходном сообщении.</div>
+            <div style="max-width:260px; margin:0 auto 6px;">
+                <button id="replySuggestionPoolRefresh" type="button" class="utst-shortcut-capture" style="width:100%;">Обновить базу из GitHub</button>
+            </div>
+            <div id="replySuggestionPoolStatus" style="font-size:11px; color: rgba(255,255,255,0.5); text-align:center; margin-bottom:8px; min-height:14px;"></div>
+
+            <label for="replySuggestionLangSelect" style="color:#fff; font-size:12px;">Язык подсказки:</label>
+            <select id="replySuggestionLangSelect" class="utst-blacklist-input" style="cursor:pointer; margin-bottom:8px;">
+                ${targetLanguageOptionsHtml}
+            </select>
+
+            <label for="replySuggestionPrompt" style="color:#fff; font-size:12px;">Промпт для ИИ-подсказки:</label>
+            <textarea id="replySuggestionPrompt" class="utst-blacklist-input" style="min-height: 70px; resize: vertical; font-family: monospace;" placeholder="You are a support agent replying to a lead..."></textarea>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.5);">Доступны {source_text} (сообщение лида — подставляется автоматически как запрос), {target_lang} (язык подсказки), {template} (найденный шаблон из базы, если есть).</div>
         </div>
         </div>
 
@@ -3608,6 +3644,57 @@ limitations under the License.
 
             if (pingModelsButton) pingModelsButton.addEventListener('click', runModelPingTest);
 
+            const replySuggestionToggle = translationBox.querySelector('#replySuggestionToggle');
+            const replySuggestionSourceSelect = translationBox.querySelector('#replySuggestionSource');
+            const replySuggestionPoolUrlInput = translationBox.querySelector('#replySuggestionPoolUrl');
+            const replySuggestionPoolRefreshButton = translationBox.querySelector('#replySuggestionPoolRefresh');
+            const replySuggestionPoolStatus = translationBox.querySelector('#replySuggestionPoolStatus');
+            const replySuggestionLangSelectEl = translationBox.querySelector('#replySuggestionLangSelect');
+            const replySuggestionPromptInput = translationBox.querySelector('#replySuggestionPrompt');
+
+            if (replySuggestionToggle) {
+                replySuggestionToggle.checked = GM_getValue('replySuggestionEnabled', false);
+                replySuggestionToggle.addEventListener('change', () => {
+                    GM_setValue('replySuggestionEnabled', replySuggestionToggle.checked);
+                    const wrap = translationBox.querySelector('#replySuggestionWrap');
+                    if (wrap && !replySuggestionToggle.checked) wrap.style.display = 'none';
+                });
+            }
+            if (replySuggestionSourceSelect) {
+                replySuggestionSourceSelect.value = GM_getValue('replySuggestionSource', 'pool_ai');
+                replySuggestionSourceSelect.addEventListener('change', () => GM_setValue('replySuggestionSource', replySuggestionSourceSelect.value));
+            }
+            if (replySuggestionPoolUrlInput) {
+                replySuggestionPoolUrlInput.value = GM_getValue('replySuggestionPoolUrl', '');
+                replySuggestionPoolUrlInput.addEventListener('change', () => GM_setValue('replySuggestionPoolUrl', replySuggestionPoolUrlInput.value.trim()));
+            }
+            if (replySuggestionLangSelectEl) {
+                ensureSelectValue(replySuggestionLangSelectEl, GM_getValue('replySuggestionLang', defaultTargetLang));
+                replySuggestionLangSelectEl.addEventListener('change', () => GM_setValue('replySuggestionLang', replySuggestionLangSelectEl.value));
+            }
+            if (replySuggestionPromptInput) {
+                replySuggestionPromptInput.value = GM_getValue('replySuggestionPrompt', DEFAULT_REPLY_SUGGESTION_PROMPT);
+                replySuggestionPromptInput.addEventListener('change', () => GM_setValue('replySuggestionPrompt', replySuggestionPromptInput.value));
+            }
+            if (replySuggestionPoolRefreshButton) {
+                replySuggestionPoolRefreshButton.addEventListener('click', () => {
+                    const url = (replySuggestionPoolUrlInput ? replySuggestionPoolUrlInput.value : '').trim();
+                    if (!url) { if (replySuggestionPoolStatus) replySuggestionPoolStatus.textContent = 'Сначала укажите Raw-URL.'; return; }
+                    GM_setValue('replySuggestionPoolUrl', url);
+                    replySuggestionPoolRefreshButton.disabled = true;
+                    replySuggestionPoolRefreshButton.textContent = 'Загрузка...';
+                    if (replySuggestionPoolStatus) replySuggestionPoolStatus.textContent = '';
+                    fetchReplyPool(url, (pool, error) => {
+                        replySuggestionPoolRefreshButton.disabled = false;
+                        replySuggestionPoolRefreshButton.textContent = 'Обновить базу из GitHub';
+                        if (replySuggestionPoolStatus) {
+                            replySuggestionPoolStatus.textContent = error ? error : `Загружено записей: ${pool.length}`;
+                            replySuggestionPoolStatus.style.color = error ? '#ff9c7c' : '#7cfc9a';
+                        }
+                    });
+                });
+            }
+
         defaultTranslateLangSelect.addEventListener('change', () => {
             stopSpeaking();
             const persisted = persistDefaultTargetLanguage(defaultTranslateLangSelect.value);
@@ -4012,9 +4099,138 @@ limitations under the License.
             tryNext();
         }
 
-        // Инвертированные ¡ и ¿ — стандартная орфография испанского, но по просьбе
-        // пользователя всегда вырезаются из результата перевода на испанский —
-        // независимо от того, Google это перевёл или ИИ.
+        // ===== Подсказки ответов лиду: ИИ / база с GitHub (raw JSON) / комбинация =====
+        const DEFAULT_REPLY_SUGGESTION_PROMPT = 'You are a helpful support/sales agent. A lead/client wrote the following message (it may be in any language). Write a short, polite, ready-to-send reply in {target_lang}. If a reference template is provided below, adapt it to fit this specific message instead of writing generic text. Output ONLY the reply text, no explanations or quotes.\n\nReference template (may be empty): {template}';
+
+        let replyPoolCache = null;
+        let replyPoolCacheUrl = null;
+
+        function fetchReplyPool(url, callback) {
+            if (!url) { callback([], 'URL базы не указан в настройках.'); return; }
+            GM_xmlhttpRequest({
+                method: 'GET', url, timeout: 15000,
+                onload: function (response) {
+                    try {
+                        const data = JSON.parse(response.responseText);
+                        if (!Array.isArray(data)) { callback([], 'Файл должен быть JSON-массивом.'); return; }
+                        const normalized = data
+                            .filter(item => item && typeof item.reply === 'string')
+                            .map(item => ({
+                                keywords: Array.isArray(item.keywords) ? item.keywords.map(k => String(k).toLowerCase()) : [],
+                                reply: item.reply
+                            }));
+                        replyPoolCache = normalized;
+                        replyPoolCacheUrl = url;
+                        GM_setValue('replySuggestionPoolCache', normalized);
+                        GM_setValue('replySuggestionPoolCacheUrl', url);
+                        callback(normalized, null);
+                    } catch (e) { callback([], 'Ошибка парсинга JSON: ' + e.message); }
+                },
+                onerror: function () { callback([], 'Ошибка сети при загрузке базы.'); },
+                ontimeout: function () { callback([], 'Таймаут при загрузке базы.'); }
+            });
+        }
+
+        function getReplyPool(url, callback) {
+            if (replyPoolCache && replyPoolCacheUrl === url) { callback(replyPoolCache, null); return; }
+            const savedUrl = GM_getValue('replySuggestionPoolCacheUrl', '');
+            const savedCache = GM_getValue('replySuggestionPoolCache', null);
+            if (savedCache && savedUrl === url) {
+                replyPoolCache = savedCache;
+                replyPoolCacheUrl = url;
+                callback(savedCache, null);
+                return;
+            }
+            fetchReplyPool(url, callback);
+        }
+
+        function matchReplyFromPool(pool, sourceText) {
+            if (!pool || !pool.length || !sourceText) return null;
+            const lowerText = sourceText.toLowerCase();
+            let best = null;
+            let bestScore = 0;
+            pool.forEach(entry => {
+                let score = 0;
+                entry.keywords.forEach(kw => { if (kw && lowerText.indexOf(kw) !== -1) score++; });
+                if (score > bestScore) { bestScore = score; best = entry; }
+            });
+            return bestScore > 0 ? best : null;
+        }
+
+        function generateAiReplySuggestion(sourceText, targetLangCode, templateHint, callback) {
+            const apiKey = GM_getValue('openRouterApiKey', '');
+            if (!apiKey) { callback(null, 'Нет API ключа OpenRouter в настройках.'); return; }
+
+            let prompt = GM_getValue('replySuggestionPrompt', DEFAULT_REPLY_SUGGESTION_PROMPT);
+            const targetLangName = getLanguageLabel(targetLangCode) || targetLangCode;
+            prompt = prompt.replace(/{target_lang}/gi, targetLangName).replace(/{template}/gi, templateHint || '(нет)');
+
+            const preferredModel = GM_getValue('aiModel', 'google/gemma-4-31b-it:free');
+            const fallbackEnabled = GM_getValue('aiModelFallback', true);
+            const modelQueue = fallbackEnabled
+                ? [preferredModel, ...FREE_OPENROUTER_MODELS.filter(m => m !== preferredModel)]
+                : [preferredModel];
+
+            let index = 0;
+            let lastError = 'Ошибка ИИ';
+            function tryNext() {
+                if (index >= modelQueue.length) { callback(null, lastError); return; }
+                const model = modelQueue[index++];
+                requestOpenRouterCompletion(model, apiKey, prompt, sourceText, (result) => {
+                    if (result.ok) callback(result.text, null);
+                    else { lastError = result.error; tryNext(); }
+                });
+            }
+            tryNext();
+        }
+
+        let lastReplySuggestionSourceText = '';
+        function generateReplySuggestion(sourceText) {
+            if (!GM_getValue('replySuggestionEnabled', false)) return;
+            if (!sourceText || !sourceText.trim()) return;
+            const wrap = translationBox.querySelector('#replySuggestionWrap');
+            const textEl = translationBox.querySelector('#replySuggestionText');
+            if (!wrap || !textEl) return;
+
+            lastReplySuggestionSourceText = sourceText;
+            wrap.style.display = 'block';
+            textEl.textContent = 'Генерация подсказки...';
+
+            const mode = GM_getValue('replySuggestionSource', 'pool_ai');
+            const langCode = GM_getValue('replySuggestionLang', defaultTargetLang);
+            const poolUrl = (GM_getValue('replySuggestionPoolUrl', '') || '').trim();
+
+            function finish(text) { textEl.textContent = text; }
+            function useAi(templateHint) {
+                generateAiReplySuggestion(sourceText, langCode, templateHint, (text, error) => {
+                    finish(text || ('Ошибка: ' + (error || 'не удалось сгенерировать подсказку.')));
+                });
+            }
+
+            if (mode === 'ai') { useAi(''); return; }
+
+            if (!poolUrl) {
+                if (mode === 'pool_ai') { useAi(''); return; }
+                finish('Укажите Raw-URL базы подсказок в настройках.');
+                return;
+            }
+
+            getReplyPool(poolUrl, (pool, error) => {
+                if (error) {
+                    if (mode === 'pool_ai') { useAi(''); return; }
+                    finish('Ошибка базы: ' + error);
+                    return;
+                }
+                const match = matchReplyFromPool(pool, sourceText);
+                if (mode === 'pool') {
+                    finish(match ? match.reply : 'Подходящий шаблон не найден в базе.');
+                    return;
+                }
+                useAi(match ? match.reply : '');
+            });
+        }
+
+
         function stripSpanishInvertedMarks(text, langCode) {
             if (!text || !langCode) return text;
             if (!/^es/i.test(langCode)) return text;
@@ -4393,6 +4609,8 @@ limitations under the License.
                 : { x: 0, y: 0 };
 
             translationText.textContent = '';
+            const replySuggestionWrapEl = translationBox.querySelector('#replySuggestionWrap');
+            if (replySuggestionWrapEl) replySuggestionWrapEl.style.display = 'none';
             placeBoxAtSelection(fallbackPosition);
             translationBox.style.display = 'block';
             translationBox.style.opacity = '1';
@@ -4404,6 +4622,7 @@ limitations under the License.
                 currentResolvedTargetLang = resolvedTargetLang || currentResolvedTargetLang;
                 placeBoxAtSelection(pos || fallbackPosition);
                 hideSelectionBubble();
+                generateReplySuggestion(text);
             }, fallbackPosition, 'translate');
         }
 
@@ -4661,6 +4880,25 @@ limitations under the License.
                 }, 1000);
             }
         });
+
+        const replySuggestionCopyButton = translationBox.querySelector('#replySuggestionCopy');
+        const replySuggestionRefreshButton = translationBox.querySelector('#replySuggestionRefresh');
+        if (replySuggestionCopyButton) {
+            replySuggestionCopyButton.addEventListener('click', () => {
+                const replyTextEl = translationBox.querySelector('#replySuggestionText');
+                const text = replyTextEl ? replyTextEl.textContent : '';
+                if (text) {
+                    navigator.clipboard.writeText(text);
+                    setButtonIconStroke(replySuggestionCopyButton, COPY_FEEDBACK_STROKE);
+                    setTimeout(() => applyIconThemeColors(), 1000);
+                }
+            });
+        }
+        if (replySuggestionRefreshButton) {
+            replySuggestionRefreshButton.addEventListener('click', () => {
+                if (lastReplySuggestionSourceText) generateReplySuggestion(lastReplySuggestionSourceText);
+            });
+        }
 
         function openFullscreenOverlay() {
             hideSelectionBubble();
@@ -5122,6 +5360,8 @@ limitations under the License.
         attachInlineLanguagePanel(toolLanguageSelect);
         attachInlineLanguagePanel(fieldTargetLangSelect);
         attachInlineLanguagePanel(translationBox.querySelector('#aiModelSelect'));
+        attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionSource'));
+        attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionLangSelect'));
         refreshLanguagePanelTheme();
 
         [translationBox, settingsPanel, fullscreenOverlay, fullscreenPanel].forEach((scrollEl) => {
