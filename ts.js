@@ -3911,7 +3911,7 @@ limitations under the License.
         }
 
 
-        function translateSentence(text, sourceLang, targetLang, callback) {
+        function translateSentence(text, sourceLang, targetLang, callback, retryLeft = 1) {
             if (!text || !text.trim()) {
                 callback(text, null);
                 return;
@@ -3945,10 +3945,12 @@ limitations under the License.
 
                         callback(`${leadingWhitespace}${translation}${trailingWhitespace}`, detected || null);
                     } catch (e) {
+                        if (retryLeft > 0) { translateSentence(text, sourceLang, targetLang, callback, retryLeft - 1); return; }
                         callback(`${leadingWhitespace}${errors.translation}${trailingWhitespace}`, null);
                     }
                 },
                 onerror: function () {
+                    if (retryLeft > 0) { setTimeout(() => translateSentence(text, sourceLang, targetLang, callback, retryLeft - 1), 400); return; }
                     callback(`${leadingWhitespace}${errors.connection}${trailingWhitespace}`, null);
                 }
             });
@@ -4019,6 +4021,22 @@ limitations under the License.
             return text.replace(/[¡¿]/g, '');
         }
 
+        // Кэш переводов на текущую сессию страницы — повторный перевод того же
+        // текста в тот же язык тем же движком отдаётся мгновенно, без запроса.
+        const translationCache = new Map();
+        const TRANSLATION_CACHE_LIMIT = 200;
+        function translationCacheKey(text, targetLang, engineKey) {
+            return `${engineKey}|${targetLang}|${text}`;
+        }
+        function translationCacheGet(key) { return translationCache.get(key); }
+        function translationCacheSet(key, value) {
+            if (!value || value.indexOf('Ошибка') === 0) return;
+            if (translationCache.size >= TRANSLATION_CACHE_LIMIT) {
+                translationCache.delete(translationCache.keys().next().value);
+            }
+            translationCache.set(key, value);
+        }
+
         function translateText(text, sourceLang, targetLang, callback, position) {
             if (!text) { callback(errors.noText, position, null); return; }
             if (!sourceLang || sourceLang === '') sourceLang = 'auto';
@@ -4029,8 +4047,18 @@ limitations under the License.
                 if (fallback === 'navigator') fallback = browserLang;
                 resolvedTargetLang = fallback || defaultTargetLang;
             }
-            if (GM_getValue('useAi', false)) {
-                translateWithOpenRouter(text, resolvedTargetLang, (translation, detected) => { callback(stripSpanishInvertedMarks(translation, resolvedTargetLang), position, resolvedTargetLang); });
+            const useAi = GM_getValue('useAi', false);
+            const engineKey = useAi ? ('ai:' + GM_getValue('aiModel', '')) : 'google';
+            const cacheKey = translationCacheKey(text, resolvedTargetLang, engineKey);
+            const cached = translationCacheGet(cacheKey);
+            if (cached !== undefined) { callback(cached, position, resolvedTargetLang); return; }
+
+            if (useAi) {
+                translateWithOpenRouter(text, resolvedTargetLang, (translation, detected) => {
+                    const result = stripSpanishInvertedMarks(translation, resolvedTargetLang);
+                    translationCacheSet(cacheKey, result);
+                    callback(result, position, resolvedTargetLang);
+                });
                 return;
             }
             const sentences = buildTranslationChunks(text);
@@ -4054,7 +4082,9 @@ limitations under the License.
                 updateFullscreenSourceCurrentLabel();
 
                 const fullTranslation = translatedSentences.join('');
-                callback(stripSpanishInvertedMarks(fullTranslation, resolvedTargetLang), position, resolvedTargetLang);
+                const result = stripSpanishInvertedMarks(fullTranslation, resolvedTargetLang);
+                translationCacheSet(cacheKey, result);
+                callback(result, position, resolvedTargetLang);
             }
 
             function runNextTranslations() {
@@ -4484,11 +4514,62 @@ limitations under the License.
             }
         }
 
+        // Состояние последнего перевода в конкретном поле — чтобы повторное нажатие
+        // хоткея (пока текст никто не трогал) откатывало перевод обратно к оригиналу.
+        const fieldTranslationState = new WeakMap();
+        let fieldTranslationInFlight = false;
+
+        function getFieldCurrentFullText(el) {
+            return (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') ? el.value : (el.innerText || el.textContent || '');
+        }
+
+        function setFieldBusyVisual(el, busy) {
+            if (!el) return;
+            if (busy) {
+                if (el.dataset.utstPrevOutline === undefined) el.dataset.utstPrevOutline = el.style.outline || '';
+                el.style.outline = '2px solid rgba(120,170,255,0.55)';
+                el.style.outlineOffset = '-1px';
+            } else {
+                el.style.outline = el.dataset.utstPrevOutline || '';
+                el.style.outlineOffset = '';
+                delete el.dataset.utstPrevOutline;
+            }
+        }
+
+        function restoreFieldOriginal(el, state) {
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+                setNativeFieldValue(el, state.originalFull);
+                el.setSelectionRange(state.originalFull.length, state.originalFull.length);
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+                el.dispatchEvent(new Event('change', { bubbles: true }));
+            } else {
+                el.textContent = state.originalFull;
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            el.focus();
+        }
+
         function translateEditableField(context) {
+            if (fieldTranslationInFlight) return;
+
+            // Тот же хоткей сразу после перевода в том же поле (текст не менялся вручную) — откат.
+            const prevState = fieldTranslationState.get(context.el);
+            if (prevState && Date.now() - prevState.timestamp < 6000 && getFieldCurrentFullText(context.el) === prevState.translatedFull) {
+                restoreFieldOriginal(context.el, prevState);
+                fieldTranslationState.delete(context.el);
+                return;
+            }
+
+            fieldTranslationInFlight = true;
+            setFieldBusyVisual(context.el, true);
+            const originalFull = getFieldCurrentFullText(context.el);
             const targetVal = getFieldTargetLanguage();
             translateText(context.text, 'auto', targetVal, (translation) => {
+                fieldTranslationInFlight = false;
+                setFieldBusyVisual(context.el, false);
                 if (!translation || translation === errors.noText) return;
                 replaceEditableFieldText(context, translation);
+                fieldTranslationState.set(context.el, { originalFull, translatedFull: getFieldCurrentFullText(context.el), timestamp: Date.now() });
             }, null);
         }
 
