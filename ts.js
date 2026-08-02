@@ -32,7 +32,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1
+// @version      2026.1.1
 // @icon         https://raw.githubusercontent.com/DREwX-code/Ultimate-Text-Selection-Translator/refs/heads/main/assets/icons/Icon_Translate_Script.png
 // @tag          translation
 // @tag          text selection
@@ -1619,8 +1619,8 @@ limitations under the License.
             min-width: 370px;
             max-width: 420px;
             min-height: 200px;
-            max-height: 260px;
-            overflow-y: hidden;
+            max-height: 360px;
+            overflow-y: auto;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             font-size: 14px;
             box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
@@ -1767,7 +1767,7 @@ limitations under the License.
         </div>
 
 
-        <div id="settingsPanel" style="display:none; padding:31px 20px 20px; min-height:176px; max-height:200px; min-width:370px; max-width:370px; overflow-y:auto; box-sizing:border-box;">
+        <div id="settingsPanel" style="display:none; padding:31px 20px 20px; min-height:176px; max-height:520px; min-width:370px; max-width:370px; overflow-y:auto; box-sizing:border-box;">
 
         <label for="defaultTranslateLang" style="color:#fff; font-size:14px; display:block; margin-bottom:4px;">
         ${settingsDefaultLabel}
@@ -1858,7 +1858,7 @@ limitations under the License.
                 <div style="font-size: 11px; color: rgba(255,255,255,0.5);">Используйте {target_lang} для автоматической подстановки языка перевода.</div>
             </div>
         </div>
-        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
             <label id="fieldShortcutCaptureLabel" for="fieldShortcutCaptureButton" style="color:#fff; font-size:14px; display:block; margin-bottom:4px;">Перевод текста в полях ввода (CRM, чаты)</label>
             <div style="font-size: 11px; color: rgba(255,255,255,0.5); margin-bottom: 10px;">Хоткей переводит текст прямо в поле ввода (input/textarea) — работает независимо от основного хоткея выделения, чтобы не конфликтовать с отправкой сообщения на сайте.</div>
             <div class="utst-shortcut-control">
@@ -1871,7 +1871,7 @@ limitations under the License.
                 ${targetLanguageOptionsHtml}
             </select>
         </div>
-        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
+        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
             <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:14px; cursor:pointer; margin-bottom:6px;">
                 <input type="checkbox" id="replySuggestionToggle" style="cursor:pointer;">
                 Подсказка ответа лиду под переводом
@@ -5440,18 +5440,18 @@ limitations under the License.
         if (fullscreenClose) fullscreenClose.addEventListener('click', closeFullscreenOverlay);
         const closeButton = translationBox.querySelector('#closeButton');
 
-        function lockPanelDimensions() {
-            if (!translationBox || translationBox.style.display !== 'block') return;
-            const styles = window.getComputedStyle(translationBox);
-            const width = parseFloat(styles.width);
-            const height = parseFloat(styles.height);
-            if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
-            translationBox.style.width = `${width}px`;
-            translationBox.style.minWidth = `${width}px`;
-            translationBox.style.maxWidth = `${width}px`;
-            translationBox.style.height = `${height}px`;
-            translationBox.style.minHeight = `${height}px`;
-            translationBox.style.maxHeight = `${height}px`;
+        function resizePanelForSettings() {
+            if (!translationBox) return;
+            translationBox.style.height = '';
+            translationBox.style.minHeight = 'min(460px, calc(100vh - 40px))';
+            translationBox.style.maxHeight = 'min(580px, calc(100vh - 40px))';
+        }
+
+        function restoreTranslateViewSize() {
+            if (!translationBox) return;
+            translationBox.style.height = '';
+            translationBox.style.minHeight = '200px';
+            translationBox.style.maxHeight = '360px';
         }
 
         closeButton.addEventListener('click', () => {
@@ -5463,6 +5463,7 @@ limitations under the License.
             sourceLangSelect.value = 'auto';
             detectedSourceLang = 'auto';
             stopSpeaking();
+            restoreTranslateViewSize();
 
             if (translatorPanel) translatorPanel.style.display = 'block';
             if (settingsPanel) settingsPanel.style.display = 'none';
@@ -5472,7 +5473,7 @@ limitations under the License.
         });
 
         settingsButton.addEventListener('click', () => {
-            lockPanelDimensions();
+            resizePanelForSettings();
 
             if (translatorPanel) translatorPanel.style.display = 'none';
             if (settingsPanel) settingsPanel.style.display = 'block';
@@ -5484,6 +5485,7 @@ limitations under the License.
 
 
         backButton.addEventListener('click', () => {
+            restoreTranslateViewSize();
             if (translatorPanel) translatorPanel.style.display = 'block';
             if (settingsPanel) settingsPanel.style.display = 'none';
 
