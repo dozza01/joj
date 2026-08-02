@@ -32,7 +32,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      1.4.4
+// @version      2026.1
 // @icon         https://raw.githubusercontent.com/DREwX-code/Ultimate-Text-Selection-Translator/refs/heads/main/assets/icons/Icon_Translate_Script.png
 // @tag          translation
 // @tag          text selection
