@@ -15,7 +15,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.1
+// @version      2026.1.10
 // @icon         https://raw.githubusercontent.com/PoopSoftWare/dhub/refs/heads/main/trasdesk.png
 // @tag          translation
 // @tag          text selection
