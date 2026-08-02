@@ -32,7 +32,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      1.6.1
+// @version      1.4.4
 // @icon         https://raw.githubusercontent.com/DREwX-code/Ultimate-Text-Selection-Translator/refs/heads/main/assets/icons/Icon_Translate_Script.png
 // @tag          translation
 // @tag          text selection
@@ -1887,11 +1887,18 @@ limitations under the License.
 
             <label for="replySuggestionPoolUrl" style="color:#fff; font-size:12px;">Raw-URL базы подсказок (JSON):</label>
             <input type="text" id="replySuggestionPoolUrl" class="utst-blacklist-input" placeholder="https://raw.githubusercontent.com/user/repo/main/replies.json" style="width:100%; box-sizing:border-box;">
-            <div style="font-size: 11px; color: rgba(255,255,255,0.45); margin: 4px 0 8px;">Формат файла — JSON-массив: <span style="font-family:monospace;">[{"keywords":["депозит","bonus"],"reply":"текст ответа"}]</span>. Берётся запись с наибольшим числом совпавших ключевых слов в исходном сообщении.</div>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.45); margin: 4px 0 8px;">Формат файла — JSON-массив, на одну тему можно указать сколько угодно вариантов ответа: <span style="font-family:monospace;">[{"keywords":["как дела","how are you"],"replies":["Вариант 1...","Вариант 2...","Вариант 3..."]}]</span>. Тема выбирается по наибольшему числу совпавших ключевых слов в исходном сообщении. Старый формат с одиночным полем <span style="font-family:monospace;">"reply"</span> тоже понимается.</div>
             <div style="max-width:260px; margin:0 auto 6px;">
                 <button id="replySuggestionPoolRefresh" type="button" class="utst-shortcut-capture" style="width:100%;">Обновить базу из GitHub</button>
             </div>
             <div id="replySuggestionPoolStatus" style="font-size:11px; color: rgba(255,255,255,0.5); text-align:center; margin-bottom:8px; min-height:14px;"></div>
+
+            <label for="replySuggestionVariantMode" style="color:#fff; font-size:12px;">Если для темы найдено несколько вариантов:</label>
+            <select id="replySuggestionVariantMode" class="utst-blacklist-input" style="cursor:pointer; margin-bottom:2px;">
+                <option value="random">Взять случайный</option>
+                <option value="ai_pick">ИИ выбирает наиболее подходящий и дорабатывает (только режим «База + ИИ»)</option>
+            </select>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.45); margin-bottom: 8px;">В режиме «Только база» ИИ не задействуется — выбор всегда случайный, без запроса.</div>
 
             <label for="replySuggestionLangSelect" style="color:#fff; font-size:12px;">Язык подсказки:</label>
             <select id="replySuggestionLangSelect" class="utst-blacklist-input" style="cursor:pointer; margin-bottom:8px;">
@@ -3668,6 +3675,7 @@ limitations under the License.
             const replySuggestionPoolUrlInput = translationBox.querySelector('#replySuggestionPoolUrl');
             const replySuggestionPoolRefreshButton = translationBox.querySelector('#replySuggestionPoolRefresh');
             const replySuggestionPoolStatus = translationBox.querySelector('#replySuggestionPoolStatus');
+            const replySuggestionVariantModeSelect = translationBox.querySelector('#replySuggestionVariantMode');
             const replySuggestionLangSelectEl = translationBox.querySelector('#replySuggestionLangSelect');
             const replySuggestionPromptInput = translationBox.querySelector('#replySuggestionPrompt');
 
@@ -3686,6 +3694,10 @@ limitations under the License.
             if (replySuggestionPoolUrlInput) {
                 replySuggestionPoolUrlInput.value = GM_getValue('replySuggestionPoolUrl', '');
                 replySuggestionPoolUrlInput.addEventListener('change', () => GM_setValue('replySuggestionPoolUrl', replySuggestionPoolUrlInput.value.trim()));
+            }
+            if (replySuggestionVariantModeSelect) {
+                replySuggestionVariantModeSelect.value = GM_getValue('replySuggestionVariantMode', 'random');
+                replySuggestionVariantModeSelect.addEventListener('change', () => GM_setValue('replySuggestionVariantMode', replySuggestionVariantModeSelect.value));
             }
             if (replySuggestionLangSelectEl) {
                 ensureSelectValue(replySuggestionLangSelectEl, GM_getValue('replySuggestionLang', defaultTargetLang));
@@ -4131,11 +4143,19 @@ limitations under the License.
                         const data = JSON.parse(response.responseText);
                         if (!Array.isArray(data)) { callback([], 'Файл должен быть JSON-массивом.'); return; }
                         const normalized = data
-                            .filter(item => item && typeof item.reply === 'string')
-                            .map(item => ({
-                                keywords: Array.isArray(item.keywords) ? item.keywords.map(k => String(k).toLowerCase()) : [],
-                                reply: item.reply
-                            }));
+                            .map(item => {
+                                if (!item) return null;
+                                // Поддерживаем и одиночный "reply": "...", и массив "replies": ["...", "..."]
+                                let replies = [];
+                                if (Array.isArray(item.replies)) replies = item.replies.filter(r => typeof r === 'string' && r.trim());
+                                else if (typeof item.reply === 'string' && item.reply.trim()) replies = [item.reply];
+                                if (!replies.length) return null;
+                                return {
+                                    keywords: Array.isArray(item.keywords) ? item.keywords.map(k => String(k).toLowerCase()) : [],
+                                    replies
+                                };
+                            })
+                            .filter(Boolean);
                         replyPoolCache = normalized;
                         replyPoolCacheUrl = url;
                         GM_setValue('replySuggestionPoolCache', normalized);
@@ -4152,7 +4172,10 @@ limitations under the License.
             if (replyPoolCache && replyPoolCacheUrl === url) { callback(replyPoolCache, null); return; }
             const savedUrl = GM_getValue('replySuggestionPoolCacheUrl', '');
             const savedCache = GM_getValue('replySuggestionPoolCache', null);
-            if (savedCache && savedUrl === url) {
+            // Кэш мог остаться от старого формата (одиночное поле "reply") — на всякий
+            // случай проверяем форму первой записи, иначе просто перезапрашиваем файл.
+            const cacheShapeOk = Array.isArray(savedCache) && (savedCache.length === 0 || Array.isArray(savedCache[0].replies));
+            if (savedCache && savedUrl === url && cacheShapeOk) {
                 replyPoolCache = savedCache;
                 replyPoolCacheUrl = url;
                 callback(savedCache, null);
@@ -4160,6 +4183,7 @@ limitations under the License.
             }
             fetchReplyPool(url, callback);
         }
+
 
         function matchReplyFromPool(pool, sourceText) {
             if (!pool || !pool.length || !sourceText) return null;
@@ -4201,6 +4225,12 @@ limitations under the License.
             tryNext();
         }
 
+        function pickRandomVariant(entry) {
+            if (!entry || !entry.replies || !entry.replies.length) return null;
+            if (entry.replies.length === 1) return entry.replies[0];
+            return entry.replies[Math.floor(Math.random() * entry.replies.length)];
+        }
+
         let lastReplySuggestionSourceText = '';
         function generateReplySuggestion(sourceText) {
             if (!GM_getValue('replySuggestionEnabled', false)) return;
@@ -4214,6 +4244,7 @@ limitations under the License.
             textEl.textContent = 'Генерация подсказки...';
 
             const mode = GM_getValue('replySuggestionSource', 'pool_ai');
+            const variantMode = GM_getValue('replySuggestionVariantMode', 'random');
             const langCode = GM_getValue('replySuggestionLang', defaultTargetLang);
             const poolUrl = (GM_getValue('replySuggestionPoolUrl', '') || '').trim();
 
@@ -4222,6 +4253,19 @@ limitations under the License.
                 generateAiReplySuggestion(sourceText, langCode, templateHint, (text, error) => {
                     finish(text || ('Ошибка: ' + (error || 'не удалось сгенерировать подсказку.')));
                 });
+            }
+            // Если в найденной теме несколько готовых вариантов — либо берём случайный,
+            // либо (только в режиме "База + ИИ") отдаём ИИ все варианты, чтобы он выбрал
+            // наиболее подходящий по смыслу и доработал именно его под это сообщение.
+            function useAiWithVariants(entry) {
+                if (!entry) { useAi(''); return; }
+                if (variantMode === 'ai_pick' && entry.replies.length > 1) {
+                    const templateHint = 'Ниже несколько готовых вариантов ответа на похожие сообщения — выбери ОДИН, наиболее подходящий по смыслу к этому конкретному сообщению, и адаптируй его под него:\n\n'
+                        + entry.replies.map((r, i) => `Вариант ${i + 1}: ${r}`).join('\n\n');
+                    useAi(templateHint);
+                } else {
+                    useAi(pickRandomVariant(entry) || '');
+                }
             }
 
             if (mode === 'ai') { useAi(''); return; }
@@ -4240,12 +4284,15 @@ limitations under the License.
                 }
                 const match = matchReplyFromPool(pool, sourceText);
                 if (mode === 'pool') {
-                    finish(match ? match.reply : 'Подходящий шаблон не найден в базе.');
+                    // Чистый режим "База" — без ИИ, всегда случайный вариант из подходящей темы.
+                    const picked = match ? pickRandomVariant(match) : null;
+                    finish(picked || 'Подходящий шаблон не найден в базе.');
                     return;
                 }
-                useAi(match ? match.reply : '');
+                useAiWithVariants(match);
             });
         }
+
 
 
         function stripSpanishInvertedMarks(text, langCode) {
@@ -5378,6 +5425,7 @@ limitations under the License.
         attachInlineLanguagePanel(fieldTargetLangSelect);
         attachInlineLanguagePanel(translationBox.querySelector('#aiModelSelect'));
         attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionSource'));
+        attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionVariantMode'));
         attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionLangSelect'));
         refreshLanguagePanelTheme();
 
