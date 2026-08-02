@@ -1,28 +1,11 @@
 // ==UserScript==
-// @name             TransDesk – Instantly Translate Any Selected Text
-// @name:fr          TransDesk – Traduisez instantanément n'importe quel texte sélectionné
-// @name:es          TransDesk – Traduce instantáneamente cualquier texto seleccionado
-// @name:de          TransDesk – Übersetzen Sie jeden ausgewählten Text sofort
-// @name:ru          TransDesk – Мгновенно переводите любой выделенный текст
+// @name        TransDesk – Мгновенно переводите любой выделенный текст
+// @description   Мгновенно переводите выделенный текст с помощью умной кнопки или сочетания Ctrl+L. Автоматически определяет язык и переводит его на выбранный вами язык.
 
-// @name:fr-CA       TransDesk – Traduisez instantanément n'importe quel texte sélectionné
-// @name:ckb         TransDesk – Her Nivîsarek Hilbijartî tavilê Wergerîne
-// @name:es-419      TransDesk – Traduce instantáneamente cualquier texto seleccionado
 
-// @description       Instantly translate selected text using the smart button or the Ctrl+L shortcut. Automatically detects the language and translates it into the language of your choice.
-// @description:fr    Traduisez instantanément le texte sélectionné grâce au bouton intelligent ou au raccourci Ctrl+L. Détection automatique de la langue et traduction immédiate dans la langue de votre choix.
-// @description:es    Traduce instantáneamente el texto seleccionado mediante el botón inteligente o el atajo Ctrl+L. Detecta automáticamente el idioma y lo traduce al idioma de tu elección.
-// @description:de    Übersetzen Sie ausgewählten Text sofort über die intelligente Schaltfläche oder die Tastenkombination Strg+L. Erkennt die Sprache automatisch und übersetzt sie in die Sprache Ihrer Wahl.
-// @description:ru    Мгновенно переводите выделенный текст с помощью умной кнопки или сочетания Ctrl+L. Автоматически определяет язык и переводит его на выбранный вами язык.
-// @description:uk    Миттєво перекладіть виділений текст за допомогою розумної кнопки або поєднання Ctrl+L. Автоматично визначає мову та перекладає її на обрану вами мову.
-// @description:vi    Dịch ngay văn bản đã chọn bằng nút thông minh hoặc phím tắt Ctrl+L. Tự động phát hiện ngôn ngữ và dịch sang ngôn ngữ bạn chọn.
-// @description:fr-CA Traduisez instantanément le texte sélectionné grâce au bouton intelligent ou au raccourci Ctrl+L. Détection automatique de la langue et traduction immédiate dans la langue de votre choix.
-// @description:ckb   دەقە هەڵبژێردراوەکانت بە شێوەیەکی خێرا بە دوگمەی زیرەک یان Ctrl+L وەرگێڕە. زمان بە ئۆتۆماتیکی دەدۆزێتەوە و دەیگۆڕێتە سەر زمانی هەڵبژێردراوی تۆ.
-// @description:es-419 Traduce instantáneamente el texto seleccionado mediante el botón inteligente o el atajo Ctrl+L. Detecta automáticamente el idioma y lo traduce al idioma que elijas.
-
-// @namespace    https://github.com/DREwX-code
-// @author       Dℝ∃wX
-// @copyright    2025-2026 Dℝ∃wX
+// @namespace    TransDesk
+// @author       TransDesk
+// @copyright    2025-2026 TransDesk
 // @license      Apache-2.0
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
