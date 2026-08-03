@@ -1,7 +1,6 @@
 // ==UserScript==
-// @name        TransDesk – Мгновенно переводите любой выделенный текст
-// @description   Мгновенно переводите выделенный текст с помощью умной кнопки или сочетания Ctrl+L. Автоматически определяет язык и переводит его на выбранный вами язык.
-
+// @name         TransDesk – Мгновенно переводите любой выделенный текст
+// @description  Мгновенно переводите выделенный текст с помощью умной кнопки или сочетания Ctrl+L. Автоматически определяет язык и переводит его на выбранный вами язык.
 
 // @namespace    TransDesk
 // @author       TransDesk
@@ -15,7 +14,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.10
+// @version      2026.1.11
 // @icon         https://raw.githubusercontent.com/PoopSoftWare/dhub/refs/heads/main/trasdesk.png
 // @tag          translation
 // @tag          text selection
@@ -32,7 +31,7 @@
 // ==/UserScript==
 
 /*
-Copyright 2025-2026 Dℝ∃wX
+Copyright 2025-2026 TransDesk
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -53,10 +52,11 @@ limitations under the License.
     'use strict';
 
     const UTST_LOGO_URL = 'https://raw.githubusercontent.com/DREwX-code/Ultimate-Text-Selection-Translator/refs/heads/main/assets/icons/Icon_Translate_Script.png';
-    // Актуальный (на момент обновления) список бесплатных :free моделей OpenRouter.
-    // Используется и в выпадающем списке настроек, и как порядок автоматического
-    // переключения (фолбэк), если выбранный провайдер/модель не отвечает.
-    const FREE_OPENROUTER_MODELS = [
+    // Резервный список бесплатных :free моделей OpenRouter — используется, только
+    // если живой запрос к openrouter.ai/api/v1/models ещё не завершился или упал
+    // (нет сети, таймаут и т.п.). Основной, всегда актуальный список подтягивается
+    // динамически — см. ensureFreeModelsFresh() / getFreeModelIds() ниже.
+    const FALLBACK_FREE_MODELS = [
         'google/gemma-4-31b-it:free',
         'nvidia/nemotron-3-super-120b-a12b:free',
         'google/gemma-4-26b-a4b-it:free',
@@ -69,6 +69,83 @@ limitations under the License.
         'cohere/north-mini-code:free',
         'openrouter/free'
     ];
+    const OPENROUTER_MODELS_CACHE_KEY = 'openRouterFreeModelsCache';
+    const OPENROUTER_MODELS_CACHE_TIME_KEY = 'openRouterFreeModelsCacheTime';
+    const OPENROUTER_MODELS_CACHE_TTL = 24 * 60 * 60 * 1000; // раз в сутки
+
+    // Список объектов {id, name, context} — из живого кэша (если он есть и не протух),
+    // иначе из зашитого резервного списка (в форме {id, name: id}).
+    function getFreeModelsList() {
+        const cached = GM_getValue(OPENROUTER_MODELS_CACHE_KEY, null);
+        if (Array.isArray(cached) && cached.length) return cached;
+        return FALLBACK_FREE_MODELS.map(id => ({ id, name: id, context: 0 }));
+    }
+    function getFreeModelIds() {
+        return getFreeModelsList().map(m => m.id);
+    }
+
+    function fetchLiveFreeModels(callback) {
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'https://openrouter.ai/api/v1/models',
+            timeout: 15000,
+            onload: function (response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    const list = (data.data || [])
+                        .filter(m => {
+                            const id = m.id || '';
+                            if (!/:free$/.test(id)) return false;
+                            const p = m.pricing || {};
+                            const promptFree = parseFloat(p.prompt || '1') === 0;
+                            const completionFree = parseFloat(p.completion || '1') === 0;
+                            const modalities = (m.architecture && m.architecture.output_modalities) || null;
+                            const isTextOut = !modalities || modalities.includes('text');
+                            return promptFree && completionFree && isTextOut;
+                        })
+                        .map(m => ({ id: m.id, name: m.name || m.id, context: m.context_length || 0 }))
+                        .sort((a, b) => (b.context || 0) - (a.context || 0));
+                    if (list.length) {
+                        GM_setValue(OPENROUTER_MODELS_CACHE_KEY, list);
+                        GM_setValue(OPENROUTER_MODELS_CACHE_TIME_KEY, Date.now());
+                        callback(list, null);
+                    } else {
+                        callback(null, 'OpenRouter вернул пустой список бесплатных моделей');
+                    }
+                } catch (e) { callback(null, 'Ошибка разбора ответа: ' + e.message); }
+            },
+            onerror: function () { callback(null, 'Ошибка сети при обращении к OpenRouter'); },
+            ontimeout: function () { callback(null, 'Таймаут при обращении к OpenRouter'); }
+        });
+    }
+
+    // Обновляет кэш, если он старше суток или отсутствует. callback вызывается
+    // в любом случае (со свежим списком, либо, при ошибке — с тем, что уже было).
+    function ensureFreeModelsFresh(callback, force) {
+        const lastFetch = GM_getValue(OPENROUTER_MODELS_CACHE_TIME_KEY, 0);
+        const cached = GM_getValue(OPENROUTER_MODELS_CACHE_KEY, null);
+        if (!force && Array.isArray(cached) && cached.length && (Date.now() - lastFetch) < OPENROUTER_MODELS_CACHE_TTL) {
+            if (callback) callback(cached, null);
+            return;
+        }
+        fetchLiveFreeModels((list, error) => { if (callback) callback(list || getFreeModelsList(), error); });
+    }
+    // Перестраивает <option> у выпадающего списка моделей из живого/кэшированного
+    // списка, сохраняя текущий выбор пользователя, если он всё ещё доступен.
+    function refreshAiModelSelectOptions(selectEl) {
+        if (!selectEl) return;
+        const list = getFreeModelsList();
+        if (!list.length) return;
+        const currentValue = selectEl.value || GM_getValue('aiModel', list[0].id);
+        selectEl.innerHTML = list.map(m => {
+            const ctx = m.context ? ` (${Math.round(m.context / 1000)}K)` : '';
+            const label = (m.name || m.id) + ctx;
+            return `<option value="${m.id}">${label.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</option>`;
+        }).join('');
+        const hasCurrent = list.some(m => m.id === currentValue);
+        selectEl.value = hasCurrent ? currentValue : list[0].id;
+        if (!hasCurrent) GM_setValue('aiModel', selectEl.value);
+    }
     // Промпт по умолчанию для генерации подсказки ответа лиду (настройки > Подсказка ответа).
     const DEFAULT_REPLY_SUGGESTION_PROMPT = 'You are a helpful support/sales agent. A lead/client wrote the following message (it may be in any language). Write a short, polite, ready-to-send reply in {target_lang}. If a reference template is provided below, adapt it to fit this specific message instead of writing generic text. Output ONLY the reply text, no explanations or quotes.\n\nReference template (may be empty): {template}';
     let utstLogoPreloadImage = null;
@@ -1728,7 +1805,10 @@ limitations under the License.
 
             <div id="replySuggestionWrap" style="display:none; margin-top:4px;">
                 <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-                    <span style="color:#a0a0c0; font-size:12px; font-weight:600;">Подсказка ответа</span>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span style="color:#a0a0c0; font-size:12px; font-weight:600;">Подсказка ответа</span>
+                        <span id="replySuggestionBadge" style="display:none; font-size:10px; font-weight:700; letter-spacing:0.3px; padding:2px 7px; border-radius:20px; background:rgba(120,170,255,0.18); border:1px solid rgba(120,170,255,0.35); color:#bcd0ff;"></span>
+                    </div>
                     <div style="display:flex; gap:10px; align-items:center;">
                         <div id="replySuggestionRefresh" style="cursor:pointer;" title="Сгенерировать заново">
                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1827,7 +1907,11 @@ limitations under the License.
                     <option value="cohere/north-mini-code:free">Cohere North Mini Code (Free, 256K)</option>
                     <option value="openrouter/free">OpenRouter Auto-Router (Free, 200K)</option>
                 </select>
-                <div style="font-size: 11px; color: rgba(255,255,255,0.45);">Список бесплатных моделей на OpenRouter регулярно меняется — актуальный можно свериться на openrouter.ai/models (фильтр Price: Free).</div>
+                <div style="font-size: 11px; color: rgba(255,255,255,0.45);">Список подтягивается автоматически с OpenRouter (раз в сутки) — вручную обновлять не нужно, но можно кнопкой ниже.</div>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="aiModelListRefresh" type="button" class="utst-shortcut-reset" style="width:auto; flex-shrink:0; font-size:11px; padding:4px 10px;" title="Обновить список моделей">↺ Обновить</button>
+                    <div id="aiModelListStatus" style="font-size:11px; color: rgba(255,255,255,0.45);"></div>
+                </div>
                 <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:12px; cursor:pointer; margin-top:2px;">
                     <input type="checkbox" id="aiModelFallbackToggle" style="cursor:pointer;">
                     Если модель недоступна — автоматически пробовать следующую бесплатную
@@ -3547,8 +3631,37 @@ limitations under the License.
                 openRouterApiKeyInput.addEventListener('change', () => GM_setValue('openRouterApiKey', openRouterApiKeyInput.value.trim()));
             }
             if (aiModelSelect) {
-                aiModelSelect.value = GM_getValue('aiModel', 'google/gemma-4-31b-it:free');
+                refreshAiModelSelectOptions(aiModelSelect);
                 aiModelSelect.addEventListener('change', () => GM_setValue('aiModel', aiModelSelect.value));
+            }
+            const aiModelListRefreshButton = translationBox.querySelector('#aiModelListRefresh');
+            const aiModelListStatus = translationBox.querySelector('#aiModelListStatus');
+            function setModelListStatus(text, isError) {
+                if (!aiModelListStatus) return;
+                aiModelListStatus.textContent = text;
+                aiModelListStatus.style.color = isError ? '#ff9c7c' : 'rgba(255,255,255,0.45)';
+            }
+            const cachedAt = GM_getValue(OPENROUTER_MODELS_CACHE_TIME_KEY, 0);
+            if (cachedAt) setModelListStatus('Обновлено: ' + new Date(cachedAt).toLocaleString());
+            // Раз в сутки — тихое фоновое обновление списка моделей (не мешает работе,
+            // просто освежает <option> и кэш к следующему разу).
+            ensureFreeModelsFresh((list, error) => {
+                if (!error) {
+                    refreshAiModelSelectOptions(aiModelSelect);
+                    setModelListStatus('Обновлено: ' + new Date().toLocaleString());
+                }
+            });
+            if (aiModelListRefreshButton) {
+                aiModelListRefreshButton.addEventListener('click', () => {
+                    aiModelListRefreshButton.disabled = true;
+                    setModelListStatus('Обновление...');
+                    ensureFreeModelsFresh((list, error) => {
+                        aiModelListRefreshButton.disabled = false;
+                        if (error) { setModelListStatus(error, true); return; }
+                        refreshAiModelSelectOptions(aiModelSelect);
+                        setModelListStatus(`Список обновлён (${list.length} моделей), ` + new Date().toLocaleString());
+                    }, true);
+                });
             }
             if (aiSystemPromptInput) {
                 aiSystemPromptInput.value = GM_getValue('aiSystemPrompt', 'You are a professional translator. Translate the following text to {target_lang}. Keep the original formatting, tone, and meaning. Do not add any extra text, explanations, or notes. Output ONLY the translated text.');
@@ -3563,7 +3676,6 @@ limitations under the License.
 
             const pingModelsButton = translationBox.querySelector('#pingModelsButton');
             const pingModelsResults = translationBox.querySelector('#pingModelsResults');
-            const PING_MODEL_LIST = FREE_OPENROUTER_MODELS;
 
             function pingOpenRouterModel(model, apiKey, callback) {
                 const start = performance.now();
@@ -3609,6 +3721,7 @@ limitations under the License.
                 pingModelsButton.disabled = true;
                 pingModelsButton.textContent = 'Проверка...';
                 pingModelsResults.innerHTML = '';
+                const PING_MODEL_LIST = getFreeModelIds();
                 const statusEls = {};
                 PING_MODEL_LIST.forEach(model => {
                     const row = document.createElement('div');
@@ -4090,7 +4203,7 @@ limitations under the License.
             // Сначала пробуем выбранную модель, а если провайдер недоступен/вернул
             // ошибку — по очереди остальные бесплатные модели, пока одна не ответит.
             const modelQueue = fallbackEnabled
-                ? [preferredModel, ...FREE_OPENROUTER_MODELS.filter(m => m !== preferredModel)]
+                ? [preferredModel, ...getFreeModelIds().filter(m => m !== preferredModel)]
                 : [preferredModel];
 
             let index = 0;
@@ -4192,7 +4305,7 @@ limitations under the License.
             const preferredModel = GM_getValue('aiModel', 'google/gemma-4-31b-it:free');
             const fallbackEnabled = GM_getValue('aiModelFallback', true);
             const modelQueue = fallbackEnabled
-                ? [preferredModel, ...FREE_OPENROUTER_MODELS.filter(m => m !== preferredModel)]
+                ? [preferredModel, ...getFreeModelIds().filter(m => m !== preferredModel)]
                 : [preferredModel];
 
             let index = 0;
@@ -4220,21 +4333,30 @@ limitations under the License.
             if (!sourceText || !sourceText.trim()) return;
             const wrap = translationBox.querySelector('#replySuggestionWrap');
             const textEl = translationBox.querySelector('#replySuggestionText');
+            const badgeEl = translationBox.querySelector('#replySuggestionBadge');
             if (!wrap || !textEl) return;
 
             lastReplySuggestionSourceText = sourceText;
             wrap.style.display = 'block';
             textEl.textContent = 'Генерация подсказки...';
+            if (badgeEl) badgeEl.style.display = 'none';
 
             const mode = GM_getValue('replySuggestionSource', 'pool_ai');
             const variantMode = GM_getValue('replySuggestionVariantMode', 'random');
             const langCode = GM_getValue('replySuggestionLang', defaultTargetLang);
             const poolUrl = (GM_getValue('replySuggestionPoolUrl', '') || '').trim();
 
-            function finish(text) { textEl.textContent = text; }
+            function setBadge(label) {
+                if (!badgeEl) return;
+                if (!label) { badgeEl.style.display = 'none'; return; }
+                badgeEl.textContent = label;
+                badgeEl.style.display = 'inline-block';
+            }
+            function finish(text, badgeLabel) { textEl.textContent = text; setBadge(badgeLabel); }
             function useAi(templateHint) {
                 generateAiReplySuggestion(sourceText, langCode, templateHint, (text, error) => {
-                    finish(text || ('Ошибка: ' + (error || 'не удалось сгенерировать подсказку.')));
+                    if (!text) { finish('Ошибка: ' + (error || 'не удалось сгенерировать подсказку.'), null); return; }
+                    finish(text, templateHint ? 'База+ИИ' : 'ИИ');
                 });
             }
             // Если в найденной теме несколько готовых вариантов — либо берём случайный,
@@ -4255,21 +4377,21 @@ limitations under the License.
 
             if (!poolUrl) {
                 if (mode === 'pool_ai') { useAi(''); return; }
-                finish('Укажите Raw-URL базы подсказок в настройках.');
+                finish('Укажите Raw-URL базы подсказок в настройках.', null);
                 return;
             }
 
             getReplyPool(poolUrl, (pool, error) => {
                 if (error) {
                     if (mode === 'pool_ai') { useAi(''); return; }
-                    finish('Ошибка базы: ' + error);
+                    finish('Ошибка базы: ' + error, null);
                     return;
                 }
                 const match = matchReplyFromPool(pool, sourceText);
                 if (mode === 'pool') {
                     // Чистый режим "База" — без ИИ, всегда случайный вариант из подходящей темы.
                     const picked = match ? pickRandomVariant(match) : null;
-                    finish(picked || 'Подходящий шаблон не найден в базе.');
+                    finish(picked || 'Подходящий шаблон не найден в базе.', picked ? 'База' : null);
                     return;
                 }
                 useAiWithVariants(match);
