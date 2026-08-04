@@ -10,11 +10,12 @@
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_addStyle
+// @grant        GM_registerMenuCommand
 // @connect      translate.googleapis.com
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.12
+// @version      2026.1.13
 // @icon         https://raw.githubusercontent.com/PoopSoftWare/dhub/refs/heads/main/trasdesk.png
 // @tag          translation
 // @tag          text selection
@@ -1961,6 +1962,28 @@ limitations under the License.
             </select>
         </div>
         <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
+            <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:14px; cursor:pointer; margin-bottom:2px;">
+                <input type="checkbox" id="pageTranslateAutoToggle" style="cursor:pointer;">
+                Переводить всю страницу автоматически при открытии
+            </label>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.5);">Работает на всех сайтах, кроме тех, что в чёрном списке (раздел выше). Хоткей ниже переводит/возвращает оригинал в любой момент вручную — независимо от этой галочки.</div>
+            <div class="utst-shortcut-control">
+                <button id="pageShortcutCaptureButton" class="utst-shortcut-capture" type="button"></button>
+                <button id="pageShortcutResetButton" class="utst-shortcut-reset" type="button" title="Сбросить сочетание">↺</button>
+            </div>
+            <div id="pageShortcutCaptureHelp" class="utst-shortcut-help"></div>
+            <label for="pageTranslateLang" style="color:#fff; font-size:12px; display:block; margin-top:4px;">Язык перевода страницы:</label>
+            <select id="pageTranslateLang" class="utst-blacklist-input" style="cursor: pointer;">
+                ${targetLanguageOptionsHtml}
+            </select>
+            <label for="pageTranslateEngine" style="color:#fff; font-size:12px;">Чем переводить:</label>
+            <select id="pageTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
+                <option value="google">Google Translate — быстро, рекомендуется</option>
+                <option value="ai">ИИ (OpenRouter) — медленно на больших страницах</option>
+            </select>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.45);">На странице обычно сотни текстовых фрагментов — через ИИ перевод займёт заметно больше времени и токенов, чем через Google. Google — разумный выбор по умолчанию.</div>
+        </div>
+        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
             <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:14px; cursor:pointer; margin-bottom:6px;">
                 <input type="checkbox" id="replySuggestionToggle" style="cursor:pointer;">
                 Подсказка ответа лиду под переводом
@@ -2814,6 +2837,22 @@ limitations under the License.
             let val = GM_getValue('fieldTargetLang', defaultTargetLang);
             if (val === 'navigator' || !val) val = browserLang;
             return val;
+        }
+
+        const pageTranslateAutoToggle = translationBox.querySelector('#pageTranslateAutoToggle');
+        const pageTranslateLangSelect = translationBox.querySelector('#pageTranslateLang');
+        const pageTranslateEngineSelect = translationBox.querySelector('#pageTranslateEngine');
+        if (pageTranslateAutoToggle) {
+            pageTranslateAutoToggle.checked = GM_getValue('pageTranslateAuto', false);
+            pageTranslateAutoToggle.addEventListener('change', () => GM_setValue('pageTranslateAuto', pageTranslateAutoToggle.checked));
+        }
+        if (pageTranslateLangSelect) {
+            ensureSelectValue(pageTranslateLangSelect, GM_getValue('pageTranslateLang', defaultTargetLang));
+            pageTranslateLangSelect.addEventListener('change', () => GM_setValue('pageTranslateLang', pageTranslateLangSelect.value));
+        }
+        if (pageTranslateEngineSelect) {
+            pageTranslateEngineSelect.value = GM_getValue('pageTranslateEngine', 'google');
+            pageTranslateEngineSelect.addEventListener('change', () => GM_setValue('pageTranslateEngine', pageTranslateEngineSelect.value));
         }
 
         function normalizePanelTheme(value) {
@@ -5032,6 +5071,245 @@ limitations under the License.
             }
         });
 
+        // ===== Перевод всей страницы =====
+        const PAGE_SHORTCUT_KEY = 'pageTranslateShortcut';
+        const DEFAULT_PAGE_SHORTCUT = Object.freeze({
+            ctrl: true, alt: false, shift: true, meta: false,
+            key: 'l', code: 'KeyL', displayKey: 'L'
+        });
+        function cloneDefaultPageShortcut() { return { ...DEFAULT_PAGE_SHORTCUT }; }
+        function normalizePageShortcutCandidate(value) {
+            if (!value || typeof value !== 'object') return cloneDefaultPageShortcut();
+            const legacyKey = String(value.key || '').toLowerCase();
+            const code = String(value.code || getShortcutCodeFromLegacyKey(legacyKey));
+            const displayKey = getDisplayKeyFromCode(code, legacyKey);
+            const shortcut = { ctrl: !!value.ctrl, alt: !!value.alt, shift: !!value.shift, meta: !!value.meta, key: legacyKey, code, displayKey };
+            if (!shortcut.code || !hasShortcutModifier(shortcut) || isModifierShortcutCode(shortcut.code) || isModifierShortcutKey(shortcut.key)) {
+                return cloneDefaultPageShortcut();
+            }
+            return shortcut;
+        }
+        function loadPageShortcutSetting() {
+            const saved = GM_getValue(PAGE_SHORTCUT_KEY, null);
+            const normalized = normalizePageShortcutCandidate(saved);
+            if (!saved || JSON.stringify(saved) !== JSON.stringify(normalized)) GM_setValue(PAGE_SHORTCUT_KEY, normalized);
+            return normalized;
+        }
+        let pageShortcutCaptureActive = false;
+        let currentPageShortcut = loadPageShortcutSetting();
+        function updatePageShortcutSettingsUi(message = '') {
+            const btn = translationBox.querySelector('#pageShortcutCaptureButton');
+            const help = translationBox.querySelector('#pageShortcutCaptureHelp');
+            if (!btn && !help) return;
+            if (btn) {
+                btn.textContent = pageShortcutCaptureActive ? 'Нажмите клавиши...' : formatShortcut(currentPageShortcut);
+                btn.classList.toggle('is-recording', pageShortcutCaptureActive);
+                btn.setAttribute('aria-pressed', pageShortcutCaptureActive ? 'true' : 'false');
+            }
+            if (help) help.textContent = message || 'Нажмите, затем введите сочетание с Ctrl, Alt, Shift или Cmd.';
+        }
+        function savePageShortcutSetting(shortcut) {
+            currentPageShortcut = normalizePageShortcutCandidate(shortcut);
+            GM_setValue(PAGE_SHORTCUT_KEY, currentPageShortcut);
+            updatePageShortcutSettingsUi();
+            return currentPageShortcut;
+        }
+        function bindPageShortcutControls() {
+            const btn = translationBox.querySelector('#pageShortcutCaptureButton');
+            const resetBtn = translationBox.querySelector('#pageShortcutResetButton');
+            if (btn) {
+                btn.addEventListener('click', (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    pageShortcutCaptureActive = true;
+                    updatePageShortcutSettingsUi();
+                    btn.focus();
+                });
+                btn.addEventListener('keydown', (e) => {
+                    if (!pageShortcutCaptureActive) return;
+                    e.preventDefault(); e.stopPropagation();
+                    if (e.key === 'Escape' && !hasShortcutModifier({ ctrl: e.ctrlKey, alt: e.altKey, shift: e.shiftKey, meta: e.metaKey })) {
+                        pageShortcutCaptureActive = false;
+                        updatePageShortcutSettingsUi();
+                        return;
+                    }
+                    const candidate = shortcutFromKeyboardEvent(e);
+                    if (!candidate || !hasShortcutModifier(candidate)) {
+                        updatePageShortcutSettingsUi('Добавьте хотя бы Ctrl, Alt, Shift или Cmd.');
+                        return;
+                    }
+                    pageShortcutCaptureActive = false;
+                    savePageShortcutSetting(candidate);
+                    updatePageShortcutSettingsUi('Сочетание сохранено.');
+                });
+                btn.addEventListener('blur', () => {
+                    if (!pageShortcutCaptureActive) return;
+                    pageShortcutCaptureActive = false;
+                    updatePageShortcutSettingsUi();
+                });
+            }
+            if (resetBtn) {
+                resetBtn.addEventListener('click', (e) => {
+                    e.preventDefault(); e.stopPropagation();
+                    pageShortcutCaptureActive = false;
+                    savePageShortcutSetting(cloneDefaultPageShortcut());
+                });
+            }
+        }
+        bindPageShortcutControls();
+        updatePageShortcutSettingsUi();
+
+        let pageTranslateActive = false;
+        let pageTranslateInFlight = false;
+        let pageTranslatedNodes = new Map(); // TextNode -> оригинальный текст
+        let pageTranslateStatusEl = null;
+
+        function getPageTranslateStatusEl() {
+            if (pageTranslateStatusEl && document.contains(pageTranslateStatusEl)) return pageTranslateStatusEl;
+            const el = document.createElement('div');
+            el.id = 'utstPageTranslateStatus';
+            el.style.cssText = 'position:fixed; left:50%; bottom:18px; transform:translateX(-50%); z-index:2147483000; background:#242433; color:#fff; font: 12px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; padding:8px 14px; border-radius:20px; box-shadow:0 6px 18px rgba(0,0,0,0.35); border:1px solid rgba(255,255,255,0.12); pointer-events:none; opacity:0; transition:opacity .15s ease;';
+            document.documentElement.appendChild(el);
+            pageTranslateStatusEl = el;
+            return el;
+        }
+        function showPageTranslateStatus(text, autoHide) {
+            const el = getPageTranslateStatusEl();
+            el.textContent = text;
+            el.style.opacity = '1';
+            if (autoHide) setTimeout(() => { if (el) el.style.opacity = '0'; }, 1800);
+        }
+
+        function isOwnUiNode(node) {
+            return !!(utstUi.host && node && utstUi.host.contains(node));
+        }
+        const PAGE_TRANSLATE_SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'IFRAME', 'CODE', 'PRE', 'SVG', 'CANVAS']);
+        function collectPageTextNodes() {
+            const results = [];
+            if (!document.body) return results;
+            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+                acceptNode(node) {
+                    const text = node.nodeValue;
+                    if (!text || !text.trim()) return NodeFilter.FILTER_REJECT;
+                    const parent = node.parentElement;
+                    if (!parent) return NodeFilter.FILTER_REJECT;
+                    if (PAGE_TRANSLATE_SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+                    if (parent.isContentEditable) return NodeFilter.FILTER_REJECT;
+                    if (isOwnUiNode(parent)) return NodeFilter.FILTER_REJECT;
+                    return NodeFilter.FILTER_ACCEPT;
+                }
+            });
+            let node;
+            while ((node = walker.nextNode())) results.push(node);
+            return results;
+        }
+
+        function translatePageNodesBatch(nodes, targetLang, engine, onProgress, onDone) {
+            const BATCH_SIZE = 8;
+            const MAX_CONCURRENT = 3;
+            const batches = [];
+            for (let i = 0; i < nodes.length; i += BATCH_SIZE) batches.push(nodes.slice(i, i + BATCH_SIZE));
+
+            let doneCount = 0;
+            let activeRequests = 0;
+            let nextBatchIndex = 0;
+            let stopped = false;
+
+            function translateOneNode(node, cb) {
+                translateText(node.nodeValue, 'auto', targetLang, (translation) => cb(translation), null, engine);
+            }
+
+            function processBatch(batch, cb) {
+                const joined = batch.map(n => n.nodeValue).join('\n');
+                translateText(joined, 'auto', targetLang, (translation) => {
+                    const parts = typeof translation === 'string' ? translation.split('\n') : [];
+                    if (parts.length === batch.length) { cb(parts); return; }
+                    // Число строк после перевода не совпало — переводим узлы этой пачки по одному.
+                    const results = new Array(batch.length);
+                    let remaining = batch.length;
+                    batch.forEach((node, idx) => {
+                        translateOneNode(node, (t) => {
+                            results[idx] = t;
+                            remaining--;
+                            if (remaining === 0) cb(results);
+                        });
+                    });
+                }, null, engine);
+            }
+
+            function next() {
+                if (stopped) return;
+                if (nextBatchIndex >= batches.length && activeRequests === 0) { onDone(); return; }
+                while (activeRequests < MAX_CONCURRENT && nextBatchIndex < batches.length) {
+                    const batch = batches[nextBatchIndex++];
+                    activeRequests++;
+                    processBatch(batch, (results) => {
+                        if (!stopped) {
+                            batch.forEach((node, idx) => {
+                                if (!pageTranslatedNodes.has(node)) pageTranslatedNodes.set(node, node.nodeValue);
+                                const t = results[idx];
+                                if (typeof t === 'string' && t) node.nodeValue = t;
+                            });
+                            doneCount += batch.length;
+                            if (onProgress) onProgress(doneCount, nodes.length);
+                        }
+                        activeRequests--;
+                        next();
+                    });
+                }
+            }
+            next();
+            return () => { stopped = true; };
+        }
+
+        function revertPageTranslation() {
+            pageTranslatedNodes.forEach((original, node) => {
+                try { node.nodeValue = original; } catch (e) { /* узел мог исчезнуть из DOM — пропускаем */ }
+            });
+            pageTranslatedNodes = new Map();
+            pageTranslateActive = false;
+            showPageTranslateStatus('Показан оригинал страницы', true);
+        }
+
+        function translateWholePage() {
+            if (pageTranslateInFlight) return;
+            if (pageTranslateActive) { revertPageTranslation(); return; }
+            const nodes = collectPageTextNodes();
+            if (!nodes.length) { showPageTranslateStatus('На странице нечего переводить', true); return; }
+
+            let targetLang = GM_getValue('pageTranslateLang', defaultTargetLang);
+            if (targetLang === 'navigator' || !targetLang) targetLang = browserLang;
+            const engine = GM_getValue('pageTranslateEngine', 'google');
+
+            pageTranslateInFlight = true;
+            pageTranslateActive = true;
+            showPageTranslateStatus(`Перевод страницы: 0 / ${nodes.length}`);
+
+            translatePageNodesBatch(nodes, targetLang, engine, (done, total) => {
+                showPageTranslateStatus(`Перевод страницы: ${done} / ${total}`);
+            }, () => {
+                pageTranslateInFlight = false;
+                showPageTranslateStatus(`Страница переведена (${nodes.length} фрагментов)`, true);
+            });
+        }
+
+        GM_registerMenuCommand('Перевести страницу / показать оригинал', () => translateWholePage());
+
+        document.addEventListener('keydown', (e) => {
+            if (pageShortcutCaptureActive || shortcutCaptureActive || fieldShortcutCaptureActive) return;
+            if (!shortcutMatchesEvent(currentPageShortcut, e)) return;
+            e.preventDefault();
+            translateWholePage();
+        }, true);
+
+        if (GM_getValue('pageTranslateAuto', false) && !isCurrentSiteBlacklisted()) {
+            const runAutoPageTranslate = () => setTimeout(() => translateWholePage(), 600);
+            if (document.readyState === 'complete' || document.readyState === 'interactive') {
+                runAutoPageTranslate();
+            } else {
+                document.addEventListener('DOMContentLoaded', runAutoPageTranslate, { once: true });
+            }
+        }
+
 
         function handleLanguageChange() {
             stopSpeaking();
@@ -5579,6 +5857,8 @@ limitations under the License.
         attachInlineLanguagePanel(defaultSourceLangSelect);
         attachInlineLanguagePanel(toolLanguageSelect);
         attachInlineLanguagePanel(fieldTargetLangSelect);
+        attachInlineLanguagePanel(translationBox.querySelector('#pageTranslateLang'));
+        attachInlineLanguagePanel(translationBox.querySelector('#pageTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#aiModelSelect'));
         attachInlineLanguagePanel(translationBox.querySelector('#panelTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#fieldTranslateEngine'));
