@@ -14,7 +14,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.11
+// @version      2026.1.12
 // @icon         https://raw.githubusercontent.com/PoopSoftWare/dhub/refs/heads/main/trasdesk.png
 // @tag          translation
 // @tag          text selection
@@ -1832,6 +1832,14 @@ limitations under the License.
 
         <div id="settingsPanel" style="display:none; padding:31px 20px 20px; min-height:176px; max-height:520px; min-width:370px; max-width:370px; overflow-y:auto; box-sizing:border-box;">
 
+        <label for="defaultSourceLang" style="color:#fff; font-size:14px; display:block; margin-bottom:4px;">
+        Язык, с которого переводить
+        </label>
+        <select id="defaultSourceLang" style="display:block; width:100%; max-width:260px; margin:0 auto; padding:5px 6px; border-radius:6px; background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); font-size:13px; cursor: pointer;">
+        ${sourceLanguageOptionsHtml}
+        </select>
+        <div style="font-size: 11px; color: rgba(255,255,255,0.45); max-width:260px; margin:4px auto 12px; text-align:center;">По умолчанию — "Автоопределение". Если скрипт иногда путает язык (короткие фразы, похожие алфавиты), задайте здесь конкретный язык, с которого почти всегда переводите — скрипт перестанет угадывать и будет считать, что текст всегда на нём.</div>
+
         <label for="defaultTranslateLang" style="color:#fff; font-size:14px; display:block; margin-bottom:4px;">
         ${settingsDefaultLabel}
         </label>
@@ -2272,6 +2280,7 @@ limitations under the License.
         const settingsButton = translationBox.querySelector('#settingsButton');
         const backButton = translationBox.querySelector('#backButton');
         const defaultTranslateLangSelect = translationBox.querySelector('#defaultTranslateLang');
+        const defaultSourceLangSelect = translationBox.querySelector('#defaultSourceLang');
         const toolLanguageSelect = translationBox.querySelector('#toolLanguage');
         const panelThemeSelect = translationBox.querySelector('#panelTheme');
         const panelThemeTrigger = translationBox.querySelector('#panelThemeTrigger');
@@ -3822,6 +3831,13 @@ limitations under the License.
                 });
             }
 
+        if (defaultSourceLangSelect) {
+            ensureSelectValue(defaultSourceLangSelect, GM_getValue('defaultSourceLang', 'auto'));
+            defaultSourceLangSelect.addEventListener('change', () => {
+                GM_setValue('defaultSourceLang', defaultSourceLangSelect.value);
+            });
+        }
+
         defaultTranslateLangSelect.addEventListener('change', () => {
             stopSpeaking();
             const persisted = persistDefaultTargetLanguage(defaultTranslateLangSelect.value);
@@ -4741,8 +4757,9 @@ limitations under the License.
 
         function openTranslationPanelForText(selectedText, selectionPosition) {
             stopSpeaking();
-            sourceLangSelect.value = 'auto';
-            detectedSourceLang = 'auto';
+            const defaultSourceLang = GM_getValue('defaultSourceLang', 'auto');
+            sourceLangSelect.value = defaultSourceLang;
+            detectedSourceLang = defaultSourceLang;
 
             if (translatorPanel) translatorPanel.style.display = 'block';
             if (settingsPanel) settingsPanel.style.display = 'none';
@@ -4785,7 +4802,7 @@ limitations under the License.
             translationBox.style.opacity = '1';
             translationBox.style.transform = 'translateY(0)';
 
-            runPanelTranslation(text, 'auto', targetLangForSession, (translation, pos, resolvedTargetLang) => {
+            runPanelTranslation(text, defaultSourceLang, targetLangForSession, (translation, pos, resolvedTargetLang) => {
                 currentTranslatedText = translation;
                 translationText.textContent = translation;
                 currentResolvedTargetLang = resolvedTargetLang || currentResolvedTargetLang;
@@ -5526,6 +5543,7 @@ limitations under the License.
         attachInlineLanguagePanel(sourceLangSelect);
         attachInlineLanguagePanel(targetLangSelect);
         attachInlineLanguagePanel(defaultTranslateLangSelect);
+        attachInlineLanguagePanel(defaultSourceLangSelect);
         attachInlineLanguagePanel(toolLanguageSelect);
         attachInlineLanguagePanel(fieldTargetLangSelect);
         attachInlineLanguagePanel(translationBox.querySelector('#aiModelSelect'));
