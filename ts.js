@@ -1896,9 +1896,23 @@ limitations under the License.
         </div>
         <div id="bubbleBlacklistList" class="utst-blacklist-list utst-scroll"></div>
         </div>
-        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
-            <label class="utst-toggle-row" for="useAiToggle"><input id="useAiToggle" type="checkbox" /><span>Использовать ИИ (OpenRouter)</span></label>
-            <div id="aiSettingsBlock" style="display: none; flex-direction: column; gap: 10px; margin-top: 10px;">
+        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size: 14px; color:#fff; font-weight:600;">Чем переводить</div>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.5);">Можно развести нагрузку: например, сообщения лида переводить через ИИ (качественнее), а поля ввода — через Google (почти мгновенно, без "раздумий" модели).</div>
+
+            <label for="panelTranslateEngine" style="color:#fff; font-size:12px;">Перевод сообщений лида (панель, Ctrl+L):</label>
+            <select id="panelTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
+                <option value="google">Google Translate — быстро</option>
+                <option value="ai">ИИ (OpenRouter) — качественнее, но медленнее</option>
+            </select>
+
+            <label for="fieldTranslateEngine" style="color:#fff; font-size:12px;">Перевод полей ввода (CRM, чаты):</label>
+            <select id="fieldTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
+                <option value="google">Google Translate — быстро</option>
+                <option value="ai">ИИ (OpenRouter) — качественнее, но медленнее</option>
+            </select>
+
+            <div id="aiSettingsBlock" style="display: none; flex-direction: column; gap: 10px; margin-top: 4px;">
                 <label for="openRouterApiKey" style="color:#fff; font-size:12px;">API ключ OpenRouter:</label>
                 <input id="openRouterApiKey" class="utst-blacklist-input" type="password" placeholder="sk-or-..." />
                 <label for="aiModelSelect" style="color:#fff; font-size:12px;">Модель ИИ (бесплатные, OpenRouter):</label>
@@ -2978,14 +2992,14 @@ limitations under the License.
             setLoaderState(fullscreenLoadingOverlay, fullscreenLoadingTitle, active, mode);
         }
 
-        function runPanelTranslation(text, sourceLang, targetLang, callback, position, loadingMode = 'translate') {
+        function runPanelTranslation(text, sourceLang, targetLang, callback, position, loadingMode = 'translate', engine) {
             const requestId = ++panelTranslateRequestId;
             setPanelLoading(true, loadingMode);
             translateText(text, sourceLang, targetLang, (translation, pos, resolvedTargetLang) => {
                 if (requestId !== panelTranslateRequestId) return;
                 setPanelLoading(false, loadingMode);
                 callback(translation, pos, resolvedTargetLang);
-            }, position);
+            }, position, engine);
         }
 
         function applyPanelTheme(theme, { persist = false } = {}) {
@@ -3621,20 +3635,39 @@ limitations under the License.
             currentResolvedTargetLang = initialTargetLang === 'navigator' ? browserLang : initialTargetLang;
             if (toolLanguageSelect) { toolLanguageSelect.value = toolLanguagePreference; }
 
-            // Инициализация настроек ИИ
-            const useAiToggle = translationBox.querySelector('#useAiToggle');
+            // Инициализация настроек ИИ — раздельный выбор движка для панели и полей ввода.
+            // Мигрируем со старого единого чекбокса "useAi", если новые настройки ещё не заданы.
+            const legacyUseAi = GM_getValue('useAi', false);
+            const panelTranslateEngineSelect = translationBox.querySelector('#panelTranslateEngine');
+            const fieldTranslateEngineSelect = translationBox.querySelector('#fieldTranslateEngine');
             const aiSettingsBlock = translationBox.querySelector('#aiSettingsBlock');
             const openRouterApiKeyInput = translationBox.querySelector('#openRouterApiKey');
             const aiModelSelect = translationBox.querySelector('#aiModelSelect');
             const aiSystemPromptInput = translationBox.querySelector('#aiSystemPrompt');
-            if (useAiToggle) {
-                useAiToggle.checked = GM_getValue('useAi', false);
-                aiSettingsBlock.style.display = useAiToggle.checked ? 'flex' : 'none';
-                useAiToggle.addEventListener('change', () => {
-                    GM_setValue('useAi', useAiToggle.checked);
-                    aiSettingsBlock.style.display = useAiToggle.checked ? 'flex' : 'none';
+
+            function updateAiSettingsVisibility() {
+                const anyAi = GM_getValue('panelTranslateEngine', 'google') === 'ai' || GM_getValue('fieldTranslateEngine', 'google') === 'ai';
+                if (aiSettingsBlock) aiSettingsBlock.style.display = anyAi ? 'flex' : 'none';
+            }
+            if (panelTranslateEngineSelect) {
+                const savedPanelEngine = GM_getValue('panelTranslateEngine', legacyUseAi ? 'ai' : 'google');
+                GM_setValue('panelTranslateEngine', savedPanelEngine);
+                panelTranslateEngineSelect.value = savedPanelEngine;
+                panelTranslateEngineSelect.addEventListener('change', () => {
+                    GM_setValue('panelTranslateEngine', panelTranslateEngineSelect.value);
+                    updateAiSettingsVisibility();
                 });
             }
+            if (fieldTranslateEngineSelect) {
+                const savedFieldEngine = GM_getValue('fieldTranslateEngine', legacyUseAi ? 'ai' : 'google');
+                GM_setValue('fieldTranslateEngine', savedFieldEngine);
+                fieldTranslateEngineSelect.value = savedFieldEngine;
+                fieldTranslateEngineSelect.addEventListener('change', () => {
+                    GM_setValue('fieldTranslateEngine', fieldTranslateEngineSelect.value);
+                    updateAiSettingsVisibility();
+                });
+            }
+            updateAiSettingsVisibility();
             if (openRouterApiKeyInput) {
                 openRouterApiKeyInput.value = GM_getValue('openRouterApiKey', '');
                 openRouterApiKeyInput.addEventListener('change', () => GM_setValue('openRouterApiKey', openRouterApiKeyInput.value.trim()));
@@ -4438,7 +4471,7 @@ limitations under the License.
             translationCache.set(key, value);
         }
 
-        function translateText(text, sourceLang, targetLang, callback, position) {
+        function translateText(text, sourceLang, targetLang, callback, position, engine) {
             if (!text) { callback(errors.noText, position, null); return; }
             if (!sourceLang || sourceLang === '') sourceLang = 'auto';
             let resolvedTargetLang = targetLang;
@@ -4448,7 +4481,7 @@ limitations under the License.
                 if (fallback === 'navigator') fallback = browserLang;
                 resolvedTargetLang = fallback || defaultTargetLang;
             }
-            const useAi = GM_getValue('useAi', false);
+            const useAi = engine ? engine === 'ai' : GM_getValue('useAi', false);
             const engineKey = useAi ? ('ai:' + GM_getValue('aiModel', '')) : 'google';
             const cacheKey = translationCacheKey(text, resolvedTargetLang, engineKey);
             const cached = translationCacheGet(cacheKey);
@@ -4809,7 +4842,7 @@ limitations under the License.
                 placeBoxAtSelection(pos || fallbackPosition);
                 hideSelectionBubble();
                 generateReplySuggestion(text);
-            }, fallbackPosition, 'translate');
+            }, fallbackPosition, 'translate', GM_getValue('panelTranslateEngine', 'google'));
         }
 
 
@@ -4975,7 +5008,7 @@ limitations under the License.
                 if (!translation || translation === errors.noText) return;
                 replaceEditableFieldText(context, translation);
                 fieldTranslationState.set(context.el, { originalFull, translatedFull: getFieldCurrentFullText(context.el), timestamp: Date.now() });
-            }, null);
+            }, null, GM_getValue('fieldTranslateEngine', 'google'));
         }
 
         // Отдельный хоткей для перевода полей ввода — capture-фаза, чтобы перехватить
@@ -5015,7 +5048,7 @@ limitations under the License.
                     currentTranslatedText = translation;
                     translationText.textContent = translation;
                     currentResolvedTargetLang = resolvedTargetLang || currentResolvedTargetLang;
-                }, { x: parseFloat(translationBox.style.left), y: parseFloat(translationBox.style.top) }, 'language');
+                }, { x: parseFloat(translationBox.style.left), y: parseFloat(translationBox.style.top) }, 'language', GM_getValue('panelTranslateEngine', 'google'));
             }
         }
 
@@ -5150,7 +5183,7 @@ limitations under the License.
                 currentResolvedTargetLang = resolvedTargetLang || currentResolvedTargetLang;
                 updateFullscreenSourceCurrentLabel();
                 updateFullscreenTargetCurrentLabel();
-            }, { x: 0, y: 0 });
+            }, { x: 0, y: 0 }, GM_getValue('panelTranslateEngine', 'google'));
         }
 
         function scheduleFullscreenTranslate(delay = 250, reason = 'translate') {
@@ -5547,6 +5580,8 @@ limitations under the License.
         attachInlineLanguagePanel(toolLanguageSelect);
         attachInlineLanguagePanel(fieldTargetLangSelect);
         attachInlineLanguagePanel(translationBox.querySelector('#aiModelSelect'));
+        attachInlineLanguagePanel(translationBox.querySelector('#panelTranslateEngine'));
+        attachInlineLanguagePanel(translationBox.querySelector('#fieldTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionSource'));
         attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionVariantMode'));
         attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionLangSelect'));
