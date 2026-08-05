@@ -15,7 +15,7 @@
 // @connect      openrouter.ai
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.13
+// @version      2026.1.14
 // @icon         https://raw.githubusercontent.com/PoopSoftWare/dhub/refs/heads/main/trasdesk.png
 // @tag          translation
 // @tag          text selection
@@ -1386,6 +1386,18 @@ limitations under the License.
         const utstUi = createIsolatedUiRoot(UTST_STYLE_TEXT);
         const utstUiRoot = utstUi.root;
 
+        // Состояние функций "перевод страницы" / "перевод области" — объявлено рано,
+        // чтобы к моменту любых более поздних вызовов (в т.ч. из настроек) оно уже точно
+        // существовало (иначе — та же ошибка порядка объявления, что уже однажды ловили).
+        let pageTranslateActive = false;
+        let pageTranslateInFlight = false;
+        let pageTranslatedNodes = new Map(); // TextNode -> оригинальный текст
+        let areaZoneState = { el: null, observer: null, translatedMap: new Map(), debounceTimer: null, active: false, targetLang: null, engine: null };
+        let areaPickerActive = false;
+        let areaPickerHoveredEl = null;
+        let areaPickerCleanup = null;
+        let areaPickerDoneCallback = null;
+
         function eventPathContains(event, element) {
             if (!event || !element) return false;
             const path = typeof event.composedPath === 'function' ? event.composedPath() : null;
@@ -1982,6 +1994,30 @@ limitations under the License.
                 <option value="ai">ИИ (OpenRouter) — медленно на больших страницах</option>
             </select>
             <div style="font-size: 11px; color: rgba(255,255,255,0.45);">На странице обычно сотни текстовых фрагментов — через ИИ перевод займёт заметно больше времени и токенов, чем через Google. Google — разумный выбор по умолчанию.</div>
+        </div>
+        <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
+            <div style="font-size: 14px; color:#fff; font-weight:600;">Перевод определённой области</div>
+            <div style="font-size: 11px; color: rgba(255,255,255,0.5);">Один раз укажите область на сайте (например, панель с сообщениями лида) — скрипт будет переводить в ней всё, включая новые сообщения, которые появляются позже, без повторных действий с вашей стороны. Настройка привязана к текущему домену.</div>
+            <div style="max-width:260px; margin:0 auto;">
+                <button id="areaPickButton" type="button" class="utst-shortcut-capture" style="width:100%;">🎯 Выбрать область на странице</button>
+            </div>
+            <div id="areaZoneStatus" style="font-size:11px; color: rgba(255,255,255,0.5); text-align:center;"></div>
+            <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:12px; cursor:pointer;">
+                <input type="checkbox" id="areaZoneEnabledToggle" style="cursor:pointer;">
+                Перевод области включён
+            </label>
+            <div style="max-width:260px; margin:0 auto;">
+                <button id="areaZoneClearButton" type="button" class="utst-shortcut-reset" style="width:auto; padding:4px 10px; font-size:11px;">Забыть область на этом сайте</button>
+            </div>
+            <label for="areaTranslateLang" style="color:#fff; font-size:12px;">Язык перевода области:</label>
+            <select id="areaTranslateLang" class="utst-blacklist-input" style="cursor:pointer;">
+                ${targetLanguageOptionsHtml}
+            </select>
+            <label for="areaTranslateEngine" style="color:#fff; font-size:12px;">Чем переводить:</label>
+            <select id="areaTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
+                <option value="google">Google Translate — быстро</option>
+                <option value="ai">ИИ (OpenRouter)</option>
+            </select>
         </div>
         <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
             <label style="display:flex; align-items:center; gap:8px; color:#fff; font-size:14px; cursor:pointer; margin-bottom:6px;">
@@ -2853,6 +2889,77 @@ limitations under the License.
         if (pageTranslateEngineSelect) {
             pageTranslateEngineSelect.value = GM_getValue('pageTranslateEngine', 'google');
             pageTranslateEngineSelect.addEventListener('change', () => GM_setValue('pageTranslateEngine', pageTranslateEngineSelect.value));
+        }
+
+        const areaPickButtonEl = translationBox.querySelector('#areaPickButton');
+        const areaZoneStatusEl = translationBox.querySelector('#areaZoneStatus');
+        const areaZoneEnabledToggleEl = translationBox.querySelector('#areaZoneEnabledToggle');
+        const areaZoneClearButtonEl = translationBox.querySelector('#areaZoneClearButton');
+        const areaTranslateLangSelectEl = translationBox.querySelector('#areaTranslateLang');
+        const areaTranslateEngineSelectEl = translationBox.querySelector('#areaTranslateEngine');
+
+        function refreshAreaZoneSettingsUi() {
+            const cfg = getAreaZoneConfig();
+            if (areaZoneStatusEl) {
+                areaZoneStatusEl.textContent = cfg
+                    ? `Область задана на этом сайте (${cfg.enabled ? 'включена' : 'выключена'})`
+                    : 'На этом сайте область ещё не выбрана';
+            }
+            if (areaZoneEnabledToggleEl) areaZoneEnabledToggleEl.checked = !!(cfg && cfg.enabled);
+            if (areaTranslateLangSelectEl) ensureSelectValue(areaTranslateLangSelectEl, (cfg && cfg.targetLang) || GM_getValue('areaTranslateLangDefault', defaultTargetLang));
+            if (areaTranslateEngineSelectEl) areaTranslateEngineSelectEl.value = (cfg && cfg.engine) || GM_getValue('areaTranslateEngineDefault', 'google');
+        }
+        refreshAreaZoneSettingsUi();
+
+        if (areaPickButtonEl) {
+            areaPickButtonEl.addEventListener('click', () => {
+                translationBox.style.display = 'none';
+                startAreaPicker(() => {
+                    translationBox.style.display = 'block';
+                    refreshAreaZoneSettingsUi();
+                });
+            });
+        }
+        if (areaZoneEnabledToggleEl) {
+            areaZoneEnabledToggleEl.addEventListener('change', () => {
+                const cfg = getAreaZoneConfig();
+                if (!cfg) { areaZoneEnabledToggleEl.checked = false; return; }
+                cfg.enabled = areaZoneEnabledToggleEl.checked;
+                setAreaZoneConfig(location.hostname, cfg);
+                if (cfg.enabled) activateAreaZone(cfg.selector, cfg.targetLang, cfg.engine);
+                else deactivateAreaZone();
+                refreshAreaZoneSettingsUi();
+            });
+        }
+        if (areaZoneClearButtonEl) {
+            areaZoneClearButtonEl.addEventListener('click', () => {
+                setAreaZoneConfig(location.hostname, null);
+                deactivateAreaZone();
+                refreshAreaZoneSettingsUi();
+                showPageTranslateStatus('Область забыта для этого сайта', true);
+            });
+        }
+        if (areaTranslateLangSelectEl) {
+            areaTranslateLangSelectEl.addEventListener('change', () => {
+                GM_setValue('areaTranslateLangDefault', areaTranslateLangSelectEl.value);
+                const cfg = getAreaZoneConfig();
+                if (cfg) {
+                    cfg.targetLang = areaTranslateLangSelectEl.value;
+                    setAreaZoneConfig(location.hostname, cfg);
+                    if (cfg.enabled) activateAreaZone(cfg.selector, cfg.targetLang, cfg.engine);
+                }
+            });
+        }
+        if (areaTranslateEngineSelectEl) {
+            areaTranslateEngineSelectEl.addEventListener('change', () => {
+                GM_setValue('areaTranslateEngineDefault', areaTranslateEngineSelectEl.value);
+                const cfg = getAreaZoneConfig();
+                if (cfg) {
+                    cfg.engine = areaTranslateEngineSelectEl.value;
+                    setAreaZoneConfig(location.hostname, cfg);
+                    if (cfg.enabled) activateAreaZone(cfg.selector, cfg.targetLang, cfg.engine);
+                }
+            });
         }
 
         function normalizePanelTheme(value) {
@@ -5158,9 +5265,6 @@ limitations under the License.
         bindPageShortcutControls();
         updatePageShortcutSettingsUi();
 
-        let pageTranslateActive = false;
-        let pageTranslateInFlight = false;
-        let pageTranslatedNodes = new Map(); // TextNode -> оригинальный текст
         let pageTranslateStatusEl = null;
 
         function getPageTranslateStatusEl() {
@@ -5183,10 +5287,10 @@ limitations under the License.
             return !!(utstUi.host && node && utstUi.host.contains(node));
         }
         const PAGE_TRANSLATE_SKIP_TAGS = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEXTAREA', 'INPUT', 'SELECT', 'OPTION', 'IFRAME', 'CODE', 'PRE', 'SVG', 'CANVAS']);
-        function collectPageTextNodes() {
+        function collectTextNodesIn(root) {
             const results = [];
-            if (!document.body) return results;
-            const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+            if (!root) return results;
+            const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
                 acceptNode(node) {
                     const text = node.nodeValue;
                     if (!text || !text.trim()) return NodeFilter.FILTER_REJECT;
@@ -5202,8 +5306,12 @@ limitations under the License.
             while ((node = walker.nextNode())) results.push(node);
             return results;
         }
+        function collectPageTextNodes() {
+            return collectTextNodesIn(document.body);
+        }
 
-        function translatePageNodesBatch(nodes, targetLang, engine, onProgress, onDone) {
+        function translatePageNodesBatch(nodes, targetLang, engine, onProgress, onDone, targetMap) {
+            const store = targetMap || pageTranslatedNodes;
             const BATCH_SIZE = 8;
             const MAX_CONCURRENT = 3;
             const batches = [];
@@ -5245,7 +5353,7 @@ limitations under the License.
                     processBatch(batch, (results) => {
                         if (!stopped) {
                             batch.forEach((node, idx) => {
-                                if (!pageTranslatedNodes.has(node)) pageTranslatedNodes.set(node, node.nodeValue);
+                                if (!store.has(node)) store.set(node, node.nodeValue);
                                 const t = results[idx];
                                 if (typeof t === 'string' && t) node.nodeValue = t;
                             });
@@ -5293,6 +5401,176 @@ limitations under the License.
         }
 
         GM_registerMenuCommand('Перевести страницу / показать оригинал', () => translateWholePage());
+
+        // ===== Перевод постоянной области (например, панель чата с лидом) =====
+        // В отличие от разового перевода всей страницы, здесь: (1) область запоминается
+        // по домену через GM-хранилище, (2) MutationObserver следит за появлением новых
+        // узлов (новых сообщений) и переводит их автоматически, без повторных действий.
+        function getAreaZoneConfig(hostname) {
+            const all = GM_getValue('areaTranslateZones', {});
+            return all[hostname || location.hostname] || null;
+        }
+        function setAreaZoneConfig(hostname, config) {
+            const all = GM_getValue('areaTranslateZones', {});
+            if (config === null) delete all[hostname]; else all[hostname] = config;
+            GM_setValue('areaTranslateZones', all);
+        }
+
+        function buildElementSelector(el) {
+            if (!el || el === document.body) return 'body';
+            const parts = [];
+            let node = el;
+            let depth = 0;
+            while (node && node.nodeType === 1 && node !== document.body && depth < 8) {
+                let part = node.tagName.toLowerCase();
+                if (node.id) { parts.unshift(part + '#' + CSS.escape(node.id)); break; }
+                const parent = node.parentElement;
+                if (parent) {
+                    const siblings = Array.from(parent.children).filter(c => c.tagName === node.tagName);
+                    if (siblings.length > 1) part += `:nth-of-type(${siblings.indexOf(node) + 1})`;
+                }
+                parts.unshift(part);
+                node = parent;
+                depth++;
+            }
+            return parts.join(' > ');
+        }
+
+        function deactivateAreaZone() {
+            if (areaZoneState.observer) { areaZoneState.observer.disconnect(); areaZoneState.observer = null; }
+            if (areaZoneState.debounceTimer) { clearTimeout(areaZoneState.debounceTimer); areaZoneState.debounceTimer = null; }
+            areaZoneState.el = null;
+            areaZoneState.active = false;
+        }
+
+        function scheduleZoneRetranslate() {
+            if (areaZoneState.debounceTimer) clearTimeout(areaZoneState.debounceTimer);
+            areaZoneState.debounceTimer = setTimeout(() => {
+                if (!areaZoneState.active || !areaZoneState.el || !document.contains(areaZoneState.el)) { deactivateAreaZone(); return; }
+                const allNodes = collectTextNodesIn(areaZoneState.el);
+                const newNodes = allNodes.filter(n => !areaZoneState.translatedMap.has(n));
+                if (newNodes.length) {
+                    translatePageNodesBatch(newNodes, areaZoneState.targetLang, areaZoneState.engine, null, () => {}, areaZoneState.translatedMap);
+                }
+            }, 500);
+        }
+
+        function activateAreaZone(selector, targetLang, engine) {
+            deactivateAreaZone();
+            const el = document.querySelector(selector);
+            if (!el) { showPageTranslateStatus('Область для перевода не найдена на странице', true); return false; }
+
+            areaZoneState.el = el;
+            areaZoneState.translatedMap = new Map();
+            areaZoneState.active = true;
+            areaZoneState.targetLang = targetLang;
+            areaZoneState.engine = engine;
+
+            const initialNodes = collectTextNodesIn(el);
+            if (initialNodes.length) {
+                translatePageNodesBatch(initialNodes, targetLang, engine, null, () => {
+                    showPageTranslateStatus(`Область переведена (${initialNodes.length} фрагментов), новые сообщения будут переводиться автоматически`, true);
+                }, areaZoneState.translatedMap);
+            }
+
+            const observer = new MutationObserver((mutationsList) => {
+                let needsWork = false;
+                for (const m of mutationsList) {
+                    if (m.type === 'childList' && m.addedNodes && m.addedNodes.length) { needsWork = true; break; }
+                    if (m.type === 'characterData') { needsWork = true; break; }
+                }
+                if (needsWork) scheduleZoneRetranslate();
+            });
+            observer.observe(el, { childList: true, subtree: true, characterData: true });
+            areaZoneState.observer = observer;
+            return true;
+        }
+
+        function ensureAreaPickerOverlay() {
+            let el = document.getElementById('utstAreaPickerOverlay');
+            if (el) return el;
+            el = document.createElement('div');
+            el.id = 'utstAreaPickerOverlay';
+            el.style.cssText = 'position:fixed; pointer-events:none; z-index:2147483000; border:2px solid #6cf; background:rgba(102,204,255,0.15); border-radius:4px; display:none;';
+            document.documentElement.appendChild(el);
+            return el;
+        }
+
+        function finishAreaPicker(el) {
+            if (areaPickerCleanup) { areaPickerCleanup(); areaPickerCleanup = null; }
+            areaPickerActive = false;
+            const done = areaPickerDoneCallback; areaPickerDoneCallback = null;
+            if (!el) { showPageTranslateStatus('Выбор области отменён', true); if (done) done(); return; }
+
+            const selector = buildElementSelector(el);
+            let targetLang = GM_getValue('areaTranslateLangDefault', defaultTargetLang);
+            if (targetLang === 'navigator' || !targetLang) targetLang = browserLang;
+            const engine = GM_getValue('areaTranslateEngineDefault', 'google');
+            const cfg = { selector, targetLang, engine, enabled: true };
+            setAreaZoneConfig(location.hostname, cfg);
+            showPageTranslateStatus('Область сохранена — перевожу...');
+            activateAreaZone(selector, targetLang, engine);
+            if (done) done();
+        }
+
+        function startAreaPicker(onDone) {
+            if (areaPickerActive) return;
+            areaPickerActive = true;
+            areaPickerDoneCallback = onDone || null;
+            const overlay = ensureAreaPickerOverlay();
+            overlay.style.display = 'block';
+            showPageTranslateStatus('Наведите на область для постоянного перевода и кликните. Esc — отмена.');
+
+            function onMove(e) {
+                const el = document.elementFromPoint(e.clientX, e.clientY);
+                if (!el || isOwnUiNode(el) || el === areaPickerHoveredEl) return;
+                areaPickerHoveredEl = el;
+                const rect = el.getBoundingClientRect();
+                overlay.style.left = rect.left + 'px';
+                overlay.style.top = rect.top + 'px';
+                overlay.style.width = rect.width + 'px';
+                overlay.style.height = rect.height + 'px';
+            }
+            function onClick(e) {
+                e.preventDefault(); e.stopPropagation();
+                if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+                finishAreaPicker(areaPickerHoveredEl);
+            }
+            function onKey(e) {
+                if (e.key === 'Escape') { e.preventDefault(); finishAreaPicker(null); }
+            }
+            document.addEventListener('mousemove', onMove, true);
+            document.addEventListener('click', onClick, true);
+            document.addEventListener('keydown', onKey, true);
+            areaPickerCleanup = () => {
+                document.removeEventListener('mousemove', onMove, true);
+                document.removeEventListener('click', onClick, true);
+                document.removeEventListener('keydown', onKey, true);
+                overlay.style.display = 'none';
+                areaPickerHoveredEl = null;
+            };
+        }
+
+        GM_registerMenuCommand('Выбрать область для постоянного перевода', () => startAreaPicker());
+
+        // Автозапуск сохранённой для этого домена области при загрузке страницы —
+        // с повторными попытками, т.к. в SPA-интерфейсах (типичная CRM) нужный блок
+        // часто появляется в DOM не сразу.
+        (function autoActivateSavedZone() {
+            const savedCfg = getAreaZoneConfig();
+            if (!savedCfg || !savedCfg.enabled) return;
+            let attempts = 0;
+            function tryActivate() {
+                attempts++;
+                if (document.querySelector(savedCfg.selector)) {
+                    activateAreaZone(savedCfg.selector, savedCfg.targetLang, savedCfg.engine);
+                    return;
+                }
+                if (attempts < 20) setTimeout(tryActivate, 750);
+            }
+            if (document.readyState === 'complete' || document.readyState === 'interactive') tryActivate();
+            else document.addEventListener('DOMContentLoaded', tryActivate, { once: true });
+        })();
 
         document.addEventListener('keydown', (e) => {
             if (pageShortcutCaptureActive || shortcutCaptureActive || fieldShortcutCaptureActive) return;
@@ -5859,6 +6137,8 @@ limitations under the License.
         attachInlineLanguagePanel(fieldTargetLangSelect);
         attachInlineLanguagePanel(translationBox.querySelector('#pageTranslateLang'));
         attachInlineLanguagePanel(translationBox.querySelector('#pageTranslateEngine'));
+        attachInlineLanguagePanel(translationBox.querySelector('#areaTranslateLang'));
+        attachInlineLanguagePanel(translationBox.querySelector('#areaTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#aiModelSelect'));
         attachInlineLanguagePanel(translationBox.querySelector('#panelTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#fieldTranslateEngine'));
