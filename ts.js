@@ -16,8 +16,8 @@
 // @connect      integrate.api.nvidia.com
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.15
-// @icon         https://raw.githubusercontent.com/PoopSoftWare/dhub/refs/heads/main/trasdesk.png
+// @version      2026.1.16
+// @icon         https://raw.githubusercontent.com/dozza01/joj/refs/heads/main/icons/trasdesk.png
 // @tag          translation
 // @tag          text selection
 // @tag          translate
@@ -28,8 +28,6 @@
 // @tag          language
 // @tag          multilingual
 
-// @downloadURL https://update.greasyfork.org/scripts/536284/Ultimate%20Text%20Selection%20Translator%20%E2%80%93%20Instantly%20Translate%20Any%20Selected%20Text.user.js
-// @updateURL https://update.greasyfork.org/scripts/536284/Ultimate%20Text%20Selection%20Translator%20%E2%80%93%20Instantly%20Translate%20Any%20Selected%20Text.meta.js
 // ==/UserScript==
 
 /*
