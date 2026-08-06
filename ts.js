@@ -1,10 +1,10 @@
 // ==UserScript==
-// @name         TransDesk – Мгновенно переводите любой выделенный текст
-// @description  Мгновенно переводите выделенный текст с помощью умной кнопки или сочетания Ctrl+L. Автоматически определяет язык и переводит его на выбранный вами язык.
+// @name         TransDesk – крутые яйца
+// @description  Мгновенно переводите выделенный текст с помощью умной кнопки или сочетания
 
 // @namespace    TransDesk
 // @author       TransDesk
-// @copyright    2025-2026 TransDesk
+// @copyright    Keydesk team
 // @license      Apache-2.0
 // @grant        GM_xmlhttpRequest
 // @grant        GM_getValue
@@ -13,6 +13,7 @@
 // @grant        GM_registerMenuCommand
 // @connect      translate.googleapis.com
 // @connect      openrouter.ai
+// @connect      integrate.api.nvidia.com
 // @match        *://*/*
 // @run-at       document-start
 // @version      2026.1.14
@@ -149,6 +150,82 @@ limitations under the License.
     }
     // Промпт по умолчанию для генерации подсказки ответа лиду (настройки > Подсказка ответа).
     const DEFAULT_REPLY_SUGGESTION_PROMPT = 'You are a helpful support/sales agent. A lead/client wrote the following message (it may be in any language). Write a short, polite, ready-to-send reply in {target_lang}. If a reference template is provided below, adapt it to fit this specific message instead of writing generic text. Output ONLY the reply text, no explanations or quotes.\n\nReference template (may be empty): {template}';
+
+    // ===== NVIDIA (build.nvidia.com / NIM) — второй провайдер ИИ, OpenAI-совместимый API =====
+    const NVIDIA_MODEL_PRESETS = [
+        { id: 'nvidia/llama-3.1-nemotron-70b-instruct', name: 'NVIDIA Llama 3.1 Nemotron 70B' },
+        { id: 'nvidia/llama-3.3-nemotron-super-49b-v1', name: 'NVIDIA Llama 3.3 Nemotron Super 49B' },
+        { id: 'meta/llama-3.3-70b-instruct', name: 'Meta Llama 3.3 70B (через NVIDIA)' },
+        { id: 'meta/llama-3.1-405b-instruct', name: 'Meta Llama 3.1 405B (через NVIDIA)' },
+        { id: 'mistralai/mixtral-8x22b-instruct-v0.1', name: 'Mixtral 8x22B (через NVIDIA)' },
+        { id: 'qwen/qwen2.5-72b-instruct', name: 'Qwen 2.5 72B (через NVIDIA)' },
+        { id: 'deepseek-ai/deepseek-r1', name: 'DeepSeek R1 (через NVIDIA)' },
+        { id: 'nvidia/nemotron-4-340b-instruct', name: 'NVIDIA Nemotron 4 340B' }
+    ];
+    function getNvidiaModelsList() {
+        const cached = GM_getValue('nvidiaModelsCache', null);
+        return (Array.isArray(cached) && cached.length) ? cached : NVIDIA_MODEL_PRESETS;
+    }
+    function getNvidiaModelIds() {
+        return getNvidiaModelsList().map(m => m.id);
+    }
+    function refreshNvidiaModelSelectOptions(selectEl) {
+        if (!selectEl) return;
+        const list = getNvidiaModelsList();
+        if (!list.length) return;
+        const currentValue = selectEl.value || GM_getValue('nvidiaModel', list[0].id);
+        selectEl.innerHTML = list.map(m => {
+            const label = m.name || m.id;
+            return `<option value="${m.id}">${String(label).replace(/</g, '&lt;').replace(/>/g, '&gt;')}</option>`;
+        }).join('');
+        const hasCurrent = list.some(m => m.id === currentValue);
+        selectEl.value = hasCurrent ? currentValue : list[0].id;
+        if (!hasCurrent) GM_setValue('nvidiaModel', selectEl.value);
+    }
+    function fetchLiveNvidiaModels(apiKey, callback) {
+        if (!apiKey) { callback(null, 'Сначала укажите API ключ NVIDIA.'); return; }
+        GM_xmlhttpRequest({
+            method: 'GET',
+            url: 'https://integrate.api.nvidia.com/v1/models',
+            timeout: 15000,
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            onload: function (response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    const list = (data.data || [])
+                        .map(m => ({ id: m.id, name: m.id }))
+                        .filter(m => m.id);
+                    if (list.length) {
+                        GM_setValue('nvidiaModelsCache', list);
+                        callback(list, null);
+                    } else {
+                        callback(null, 'NVIDIA вернула пустой список моделей');
+                    }
+                } catch (e) { callback(null, 'Ошибка разбора ответа: ' + e.message); }
+            },
+            onerror: function () { callback(null, 'Ошибка сети при обращении к NVIDIA'); },
+            ontimeout: function () { callback(null, 'Таймаут при обращении к NVIDIA'); }
+        });
+    }
+    function requestNvidiaCompletion(model, apiKey, prompt, text, callback) {
+        GM_xmlhttpRequest({
+            method: 'POST', url: 'https://integrate.api.nvidia.com/v1/chat/completions',
+            timeout: 25000,
+            headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json', 'Accept': 'application/json' },
+            data: JSON.stringify({ model: model, messages: [{ role: 'system', content: prompt }, { role: 'user', content: text }], temperature: 0.3, max_tokens: 1024 }),
+            onload: function (response) {
+                try {
+                    const data = JSON.parse(response.responseText);
+                    if (data.choices && data.choices[0] && data.choices[0].message) { callback({ ok: true, text: data.choices[0].message.content.trim() }); return; }
+                    if (data.error) { callback({ ok: false, error: data.error.message || data.error.detail || 'Ошибка NVIDIA API' }); return; }
+                    if (data.title || data.detail) { callback({ ok: false, error: `${data.title || 'Ошибка NVIDIA'}${data.detail ? ': ' + data.detail : ''}` }); return; }
+                    callback({ ok: false, error: 'Неверный формат ответа NVIDIA' });
+                } catch (e) { callback({ ok: false, error: 'Ошибка парсинга ответа NVIDIA: ' + e.message }); }
+            },
+            onerror: function () { callback({ ok: false, error: 'Ошибка соединения с NVIDIA API' }); },
+            ontimeout: function () { callback({ ok: false, error: 'Таймаут ответа от NVIDIA API' }); }
+        });
+    }
     let utstLogoPreloadImage = null;
     let utstLogoLoaded = false;
 
@@ -1916,16 +1993,23 @@ limitations under the License.
             <label for="panelTranslateEngine" style="color:#fff; font-size:12px;">Перевод сообщений лида (панель, Ctrl+L):</label>
             <select id="panelTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
                 <option value="google">Google Translate — быстро</option>
-                <option value="ai">ИИ (OpenRouter) — качественнее, но медленнее</option>
+                <option value="ai">ИИ — качественнее, но медленнее</option>
             </select>
 
             <label for="fieldTranslateEngine" style="color:#fff; font-size:12px;">Перевод полей ввода (CRM, чаты):</label>
             <select id="fieldTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
                 <option value="google">Google Translate — быстро</option>
-                <option value="ai">ИИ (OpenRouter) — качественнее, но медленнее</option>
+                <option value="ai">ИИ — качественнее, но медленнее</option>
             </select>
 
             <div id="aiSettingsBlock" style="display: none; flex-direction: column; gap: 10px; margin-top: 4px;">
+                <label for="aiProviderSelect" style="color:#fff; font-size:12px;">Провайдер ИИ:</label>
+                <select id="aiProviderSelect" class="utst-blacklist-input" style="cursor:pointer;">
+                    <option value="openrouter">OpenRouter (много бесплатных моделей)</option>
+                    <option value="nvidia">NVIDIA (build.nvidia.com / NIM)</option>
+                </select>
+
+                <div id="openRouterSettingsBlock" style="display:flex; flex-direction:column; gap:10px;">
                 <label for="openRouterApiKey" style="color:#fff; font-size:12px;">API ключ OpenRouter:</label>
                 <input id="openRouterApiKey" class="utst-blacklist-input" type="password" placeholder="sk-or-..." />
                 <label for="aiModelSelect" style="color:#fff; font-size:12px;">Модель ИИ (бесплатные, OpenRouter):</label>
@@ -1951,6 +2035,23 @@ limitations under the License.
                     <input type="checkbox" id="aiModelFallbackToggle" style="cursor:pointer;">
                     Если модель недоступна — автоматически пробовать следующую бесплатную
                 </label>
+                </div>
+
+                <div id="nvidiaSettingsBlock" style="display:none; flex-direction:column; gap:10px;">
+                <label for="nvidiaApiKey" style="color:#fff; font-size:12px;">API ключ NVIDIA (build.nvidia.com):</label>
+                <input id="nvidiaApiKey" class="utst-blacklist-input" type="password" placeholder="nvapi-..." />
+                <div style="font-size: 11px; color: rgba(255,255,255,0.45);">Ключ берётся на build.nvidia.com → любая модель → "Get API Key". У NVIDIA свой отдельный бесплатный лимит запросов, не связанный с OpenRouter.</div>
+                <label for="nvidiaModelSelect" style="color:#fff; font-size:12px;">Модель NVIDIA:</label>
+                <select id="nvidiaModelSelect" class="utst-blacklist-input" style="cursor: pointer;"></select>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="nvidiaModelListRefresh" type="button" class="utst-shortcut-reset" style="width:auto; flex-shrink:0; font-size:11px; padding:4px 10px;" title="Обновить список моделей своим ключом">↺ Обновить по ключу</button>
+                    <div id="nvidiaModelListStatus" style="font-size:11px; color: rgba(255,255,255,0.45);"></div>
+                </div>
+                <label for="nvidiaCustomModel" style="color:#fff; font-size:12px;">Или укажите ID модели вручную:</label>
+                <input id="nvidiaCustomModel" class="utst-blacklist-input" type="text" placeholder="например, meta/llama-3.3-70b-instruct" />
+                <div style="font-size: 11px; color: rgba(255,255,255,0.45);">Если это поле не пустое — используется оно, а не выбор выше. Полный каталог моделей — на build.nvidia.com.</div>
+                </div>
+
                 <div style="max-width:260px; margin:2px auto 0;">
                     <button id="pingModelsButton" type="button" class="utst-shortcut-capture" style="width:100%;">Проверить скорость моделей</button>
                 </div>
@@ -1991,7 +2092,7 @@ limitations under the License.
             <label for="pageTranslateEngine" style="color:#fff; font-size:12px;">Чем переводить:</label>
             <select id="pageTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
                 <option value="google">Google Translate — быстро, рекомендуется</option>
-                <option value="ai">ИИ (OpenRouter) — медленно на больших страницах</option>
+                <option value="ai">ИИ — медленно на больших страницах</option>
             </select>
             <div style="font-size: 11px; color: rgba(255,255,255,0.45);">На странице обычно сотни текстовых фрагментов — через ИИ перевод займёт заметно больше времени и токенов, чем через Google. Google — разумный выбор по умолчанию.</div>
         </div>
@@ -2016,7 +2117,7 @@ limitations under the License.
             <label for="areaTranslateEngine" style="color:#fff; font-size:12px;">Чем переводить:</label>
             <select id="areaTranslateEngine" class="utst-blacklist-input" style="cursor:pointer;">
                 <option value="google">Google Translate — быстро</option>
-                <option value="ai">ИИ (OpenRouter)</option>
+                <option value="ai">ИИ</option>
             </select>
         </div>
         <div class="utst-bubble-settings" style="margin-top: 14px; padding-top: 14px; border-top: 1px solid rgba(255, 255, 255, 0.1); display:flex; flex-direction:column; gap:10px;">
@@ -3814,9 +3915,60 @@ limitations under the License.
                 });
             }
             updateAiSettingsVisibility();
+
+            const aiProviderSelect = translationBox.querySelector('#aiProviderSelect');
+            const openRouterSettingsBlockEl = translationBox.querySelector('#openRouterSettingsBlock');
+            const nvidiaSettingsBlockEl = translationBox.querySelector('#nvidiaSettingsBlock');
+            function updateAiProviderVisibility() {
+                const provider = GM_getValue('aiProvider', 'openrouter');
+                if (openRouterSettingsBlockEl) openRouterSettingsBlockEl.style.display = provider === 'openrouter' ? 'flex' : 'none';
+                if (nvidiaSettingsBlockEl) nvidiaSettingsBlockEl.style.display = provider === 'nvidia' ? 'flex' : 'none';
+            }
+            if (aiProviderSelect) {
+                aiProviderSelect.value = GM_getValue('aiProvider', 'openrouter');
+                aiProviderSelect.addEventListener('change', () => {
+                    GM_setValue('aiProvider', aiProviderSelect.value);
+                    updateAiProviderVisibility();
+                });
+            }
+            updateAiProviderVisibility();
+
             if (openRouterApiKeyInput) {
                 openRouterApiKeyInput.value = GM_getValue('openRouterApiKey', '');
                 openRouterApiKeyInput.addEventListener('change', () => GM_setValue('openRouterApiKey', openRouterApiKeyInput.value.trim()));
+            }
+            const nvidiaApiKeyInput = translationBox.querySelector('#nvidiaApiKey');
+            const nvidiaModelSelect = translationBox.querySelector('#nvidiaModelSelect');
+            const nvidiaCustomModelInput = translationBox.querySelector('#nvidiaCustomModel');
+            const nvidiaModelListRefreshButton = translationBox.querySelector('#nvidiaModelListRefresh');
+            const nvidiaModelListStatus = translationBox.querySelector('#nvidiaModelListStatus');
+            if (nvidiaApiKeyInput) {
+                nvidiaApiKeyInput.value = GM_getValue('nvidiaApiKey', '');
+                nvidiaApiKeyInput.addEventListener('change', () => GM_setValue('nvidiaApiKey', nvidiaApiKeyInput.value.trim()));
+            }
+            if (nvidiaModelSelect) {
+                refreshNvidiaModelSelectOptions(nvidiaModelSelect);
+                nvidiaModelSelect.addEventListener('change', () => GM_setValue('nvidiaModel', nvidiaModelSelect.value));
+            }
+            if (nvidiaCustomModelInput) {
+                nvidiaCustomModelInput.value = GM_getValue('nvidiaCustomModel', '');
+                nvidiaCustomModelInput.addEventListener('change', () => GM_setValue('nvidiaCustomModel', nvidiaCustomModelInput.value.trim()));
+            }
+            if (nvidiaModelListRefreshButton) {
+                nvidiaModelListRefreshButton.addEventListener('click', () => {
+                    const key = nvidiaApiKeyInput ? nvidiaApiKeyInput.value.trim() : GM_getValue('nvidiaApiKey', '');
+                    if (!key) { if (nvidiaModelListStatus) { nvidiaModelListStatus.textContent = 'Сначала укажите API ключ NVIDIA.'; nvidiaModelListStatus.style.color = '#ff9c7c'; } return; }
+                    nvidiaModelListRefreshButton.disabled = true;
+                    if (nvidiaModelListStatus) { nvidiaModelListStatus.textContent = 'Обновление...'; nvidiaModelListStatus.style.color = 'rgba(255,255,255,0.45)'; }
+                    fetchLiveNvidiaModels(key, (list, error) => {
+                        nvidiaModelListRefreshButton.disabled = false;
+                        if (!nvidiaModelListStatus) return;
+                        if (error) { nvidiaModelListStatus.textContent = error; nvidiaModelListStatus.style.color = '#ff9c7c'; return; }
+                        refreshNvidiaModelSelectOptions(nvidiaModelSelect);
+                        nvidiaModelListStatus.textContent = `Загружено моделей: ${list.length}, ` + new Date().toLocaleString();
+                        nvidiaModelListStatus.style.color = '#7cfc9a';
+                    });
+                });
             }
             if (aiModelSelect) {
                 refreshAiModelSelectOptions(aiModelSelect);
@@ -3898,18 +4050,49 @@ limitations under the License.
                 });
             }
 
+            function pingNvidiaModel(model, apiKey, callback) {
+                const start = performance.now();
+                let settled = false;
+                const finish = (result) => { if (settled) return; settled = true; callback(result); };
+                GM_xmlhttpRequest({
+                    method: 'POST',
+                    url: 'https://integrate.api.nvidia.com/v1/chat/completions',
+                    timeout: 15000,
+                    headers: { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+                    data: JSON.stringify({
+                        model,
+                        messages: [{ role: 'user', content: 'Translate "hello" to French. Reply with only the translated word, nothing else.' }],
+                        max_tokens: 10,
+                        temperature: 0
+                    }),
+                    onload: function(response) {
+                        const ms = Math.round(performance.now() - start);
+                        try {
+                            const data = JSON.parse(response.responseText);
+                            if (data.choices && data.choices[0] && data.choices[0].message) finish({ ok: true, ms });
+                            else if (data.error) finish({ ok: false, ms, error: data.error.message || data.error.detail || 'Ошибка API' });
+                            else finish({ ok: false, ms, error: 'Неверный формат ответа' });
+                        } catch (e) { finish({ ok: false, ms, error: 'Ошибка парсинга ответа' }); }
+                    },
+                    onerror: function() { finish({ ok: false, ms: Math.round(performance.now() - start), error: 'Ошибка сети' }); },
+                    ontimeout: function() { finish({ ok: false, ms: Math.round(performance.now() - start), error: 'Таймаут (>15с)' }); }
+                });
+            }
+
             function runModelPingTest() {
-                const apiKey = GM_getValue('openRouterApiKey', '');
+                const provider = GM_getValue('aiProvider', 'openrouter');
+                const apiKey = provider === 'nvidia' ? GM_getValue('nvidiaApiKey', '') : GM_getValue('openRouterApiKey', '');
                 if (!pingModelsResults || !pingModelsButton) return;
                 pingModelsResults.style.display = 'flex';
                 if (!apiKey) {
-                    pingModelsResults.innerHTML = '<div style="color:#ff9c7c;">Сначала укажите API ключ OpenRouter выше.</div>';
+                    pingModelsResults.innerHTML = `<div style="color:#ff9c7c;">Сначала укажите API ключ ${provider === 'nvidia' ? 'NVIDIA' : 'OpenRouter'} выше.</div>`;
                     return;
                 }
                 pingModelsButton.disabled = true;
                 pingModelsButton.textContent = 'Проверка...';
                 pingModelsResults.innerHTML = '';
-                const PING_MODEL_LIST = getFreeModelIds();
+                const PING_MODEL_LIST = provider === 'nvidia' ? getNvidiaModelIds() : getFreeModelIds();
+                const pingFn = provider === 'nvidia' ? pingNvidiaModel : pingOpenRouterModel;
                 const statusEls = {};
                 PING_MODEL_LIST.forEach(model => {
                     const row = document.createElement('div');
@@ -3934,7 +4117,7 @@ limitations under the License.
                         return;
                     }
                     const model = PING_MODEL_LIST[index++];
-                    pingOpenRouterModel(model, apiKey, (result) => {
+                    pingFn(model, apiKey, (result) => {
                         const statusEl = statusEls[model];
                         if (statusEl) {
                             if (result.ok) {
@@ -4385,40 +4568,57 @@ limitations under the License.
             });
         }
 
-        function translateWithOpenRouter(text, targetLang, callback) {
-            const apiKey = GM_getValue('openRouterApiKey', '');
-            if (!apiKey) { callback("Ошибка: Отсутствует API ключ OpenRouter в настройках.", null); return; }
-
-            let prompt = GM_getValue('aiSystemPrompt', 'You are a professional translator. Translate the following text to {target_lang}. Keep the original formatting, tone, and meaning. Do not add any extra text, explanations, or notes. Output ONLY the translated text.');
-            const targetLangName = getLanguageLabel(targetLang) || targetLang;
-            prompt = prompt.replace(/{target_lang}/gi, targetLangName);
-
-            const preferredModel = GM_getValue('aiModel', 'google/gemma-4-31b-it:free');
+        // Общий фолбэк-раннер: бьёт по выбранной модели, при ошибке — по остальным
+        // моделям того же провайдера, независимо от того, вызывается ли это для
+        // перевода текста или для генерации подсказки ответа.
+        function runAiCompletionWithFallback(prompt, userText, callback) {
+            const provider = GM_getValue('aiProvider', 'openrouter');
             const fallbackEnabled = GM_getValue('aiModelFallback', true);
-            // Сначала пробуем выбранную модель, а если провайдер недоступен/вернул
-            // ошибку — по очереди остальные бесплатные модели, пока одна не ответит.
+
+            if (provider === 'nvidia') {
+                const apiKey = GM_getValue('nvidiaApiKey', '');
+                if (!apiKey) { callback(null, 'Отсутствует API ключ NVIDIA в настройках.'); return; }
+                const customModel = (GM_getValue('nvidiaCustomModel', '') || '').trim();
+                const preferredModel = customModel || GM_getValue('nvidiaModel', NVIDIA_MODEL_PRESETS[0].id);
+                const modelQueue = (fallbackEnabled && !customModel)
+                    ? [preferredModel, ...getNvidiaModelIds().filter(m => m !== preferredModel)]
+                    : [preferredModel];
+                let index = 0, lastError = 'Ошибка ИИ';
+                (function tryNext() {
+                    if (index >= modelQueue.length) { callback(null, lastError); return; }
+                    const model = modelQueue[index++];
+                    requestNvidiaCompletion(model, apiKey, prompt, userText, (result) => {
+                        if (result.ok) callback(result.text, null);
+                        else { lastError = result.error; tryNext(); }
+                    });
+                })();
+                return;
+            }
+
+            const apiKey = GM_getValue('openRouterApiKey', '');
+            if (!apiKey) { callback(null, 'Отсутствует API ключ OpenRouter в настройках.'); return; }
+            const preferredModel = GM_getValue('aiModel', 'google/gemma-4-31b-it:free');
             const modelQueue = fallbackEnabled
                 ? [preferredModel, ...getFreeModelIds().filter(m => m !== preferredModel)]
                 : [preferredModel];
-
-            let index = 0;
-            let lastError = 'Ошибка ИИ';
-            function tryNext() {
-                if (index >= modelQueue.length) { callback(lastError, null); return; }
+            let index = 0, lastError = 'Ошибка ИИ';
+            (function tryNext() {
+                if (index >= modelQueue.length) { callback(null, lastError); return; }
                 const model = modelQueue[index++];
-                requestOpenRouterCompletion(model, apiKey, prompt, text, (result) => {
-                    if (result.ok) {
-                        if (model !== preferredModel) {
-                            console.info(`[TransDesk] Модель "${preferredModel}" недоступна, использован фолбэк: "${model}".`);
-                        }
-                        callback(result.text, null);
-                    } else {
-                        lastError = 'Ошибка ИИ: ' + result.error;
-                        tryNext();
-                    }
+                requestOpenRouterCompletion(model, apiKey, prompt, userText, (result) => {
+                    if (result.ok) callback(result.text, null);
+                    else { lastError = result.error; tryNext(); }
                 });
-            }
-            tryNext();
+            })();
+        }
+
+        function translateWithAi(text, targetLang, callback) {
+            let prompt = GM_getValue('aiSystemPrompt', 'You are a professional translator. Translate the following text to {target_lang}. Keep the original formatting, tone, and meaning. Do not add any extra text, explanations, or notes. Output ONLY the translated text.');
+            const targetLangName = getLanguageLabel(targetLang) || targetLang;
+            prompt = prompt.replace(/{target_lang}/gi, targetLangName);
+            runAiCompletionWithFallback(prompt, text, (result, error) => {
+                callback(result || ('Ошибка: ' + (error || 'не удалось получить перевод от ИИ.')), null);
+            });
         }
 
         // ===== Подсказки ответов лиду: ИИ / база с GitHub (raw JSON) / комбинация =====
@@ -4490,30 +4690,10 @@ limitations under the License.
         }
 
         function generateAiReplySuggestion(sourceText, targetLangCode, templateHint, callback) {
-            const apiKey = GM_getValue('openRouterApiKey', '');
-            if (!apiKey) { callback(null, 'Нет API ключа OpenRouter в настройках.'); return; }
-
             let prompt = GM_getValue('replySuggestionPrompt', DEFAULT_REPLY_SUGGESTION_PROMPT);
             const targetLangName = getLanguageLabel(targetLangCode) || targetLangCode;
             prompt = prompt.replace(/{target_lang}/gi, targetLangName).replace(/{template}/gi, templateHint || '(нет)');
-
-            const preferredModel = GM_getValue('aiModel', 'google/gemma-4-31b-it:free');
-            const fallbackEnabled = GM_getValue('aiModelFallback', true);
-            const modelQueue = fallbackEnabled
-                ? [preferredModel, ...getFreeModelIds().filter(m => m !== preferredModel)]
-                : [preferredModel];
-
-            let index = 0;
-            let lastError = 'Ошибка ИИ';
-            function tryNext() {
-                if (index >= modelQueue.length) { callback(null, lastError); return; }
-                const model = modelQueue[index++];
-                requestOpenRouterCompletion(model, apiKey, prompt, sourceText, (result) => {
-                    if (result.ok) callback(result.text, null);
-                    else { lastError = result.error; tryNext(); }
-                });
-            }
-            tryNext();
+            runAiCompletionWithFallback(prompt, sourceText, callback);
         }
 
         function pickRandomVariant(entry) {
@@ -4634,7 +4814,7 @@ limitations under the License.
             if (cached !== undefined) { callback(cached, position, resolvedTargetLang); return; }
 
             if (useAi) {
-                translateWithOpenRouter(text, resolvedTargetLang, (translation, detected) => {
+                translateWithAi(text, resolvedTargetLang, (translation, detected) => {
                     const result = stripSpanishInvertedMarks(translation, resolvedTargetLang);
                     translationCacheSet(cacheKey, result);
                     callback(result, position, resolvedTargetLang);
@@ -6140,6 +6320,8 @@ limitations under the License.
         attachInlineLanguagePanel(translationBox.querySelector('#areaTranslateLang'));
         attachInlineLanguagePanel(translationBox.querySelector('#areaTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#aiModelSelect'));
+        attachInlineLanguagePanel(translationBox.querySelector('#aiProviderSelect'));
+        attachInlineLanguagePanel(translationBox.querySelector('#nvidiaModelSelect'));
         attachInlineLanguagePanel(translationBox.querySelector('#panelTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#fieldTranslateEngine'));
         attachInlineLanguagePanel(translationBox.querySelector('#replySuggestionSource'));
