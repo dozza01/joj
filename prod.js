@@ -16,7 +16,7 @@
 // @connect      integrate.api.nvidia.com
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.16.2
+// @version      2026.1.17
 // @icon         https://raw.githubusercontent.com/dozza01/joj/refs/heads/main/icons/trasdesk.png
 // @tag          translation
 // @tag          text selection
