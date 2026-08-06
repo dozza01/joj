@@ -16,7 +16,7 @@
 // @connect      integrate.api.nvidia.com
 // @match        *://*/*
 // @run-at       document-start
-// @version      2026.1.16
+// @version      2026.1.16.1
 // @icon         https://raw.githubusercontent.com/dozza01/joj/refs/heads/main/icons/trasdesk.png
 // @tag          translation
 // @tag          text selection
@@ -51,7 +51,7 @@ limitations under the License.
 (function () {
     'use strict';
 
-    const UTST_LOGO_URL = 'https://raw.githubusercontent.com/DREwX-code/Ultimate-Text-Selection-Translator/refs/heads/main/assets/icons/Icon_Translate_Script.png';
+    const UTST_LOGO_URL = 'https://raw.githubusercontent.com/dozza01/joj/refs/heads/main/icons/trasdesk.png';
     // Резервный список бесплатных :free моделей OpenRouter - используется, только
     // если живой запрос к openrouter.ai/api/v1/models ещё не завершился или упал
     // (нет сети, таймаут и т.п.). Основной, всегда актуальный список подтягивается
