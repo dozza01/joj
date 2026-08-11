@@ -1,0 +1,10 @@
+{
+  "es": [
+    {
+      "find": "administrator",
+      "replace": "gerente",
+      "wholeWord": true,
+      "caseSensitive": true
+    }
+  ]
+}
