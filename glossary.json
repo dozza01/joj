@@ -1,8 +1,8 @@
 {
   "es": [
     {
-      "find": "administrador",
-      "replace": "gerente",
+      "find": "Esta es la cuenta de mi administrador",
+      "replace": "Esta es la cuenta de mi gerente",
       "wholeWord": true,
       "caseSensitive": true
     }
