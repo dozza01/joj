@@ -1,7 +1,7 @@
 {
   "es": [
     {
-      "find": "administrator",
+      "find": "administrador",
       "replace": "gerente",
       "wholeWord": true,
       "caseSensitive": true
